@@ -1,27 +1,53 @@
 import { useState, useEffect } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import jsPDF from 'jspdf';
 import { supabase } from './integrations/supabase/client';
-import { Nivel, Materia, Unidad, Pregunta } from './types';
+import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB } from './types';
 import QuestionBank from './components/QuestionBank';
 import TestBuilder from './components/TestBuilder';
 import Configuration from './components/Configuration';
 import { Loader2 } from 'lucide-react';
+
+// Función para transformar los datos de la DB al formato que la App necesita
+const transformDbQuestionToAppQuestion = (dbQuestion: QuizQuestionFromDB): PreguntaApp => {
+  const correctAlt: AlternativaApp = {
+    id: dbQuestion.correct_answer,
+    texto: dbQuestion.correct_answer,
+    es_correcta: true,
+  };
+  
+  const incorrectAlts: AlternativaApp[] = (dbQuestion.incorrect_answers || []).map(text => ({
+    id: text,
+    texto: text,
+    es_correcta: false,
+  }));
+  
+  // Juntamos y mezclamos las alternativas para que la correcta no siempre aparezca primera
+  const allAlts = [correctAlt, ...incorrectAlts];
+  const shuffledAlts = allAlts.sort(() => Math.random() - 0.5);
+
+  return {
+    id: dbQuestion.id,
+    texto: dbQuestion.text,
+    alternativas: shuffledAlts,
+  };
+};
+
 
 function App() {
   // Estados para filtros y datos
   const [niveles, setNiveles] = useState<Nivel[]>([]);
   const [materias, setMaterias] = useState<Materia[]>([]);
   const [unidades, setUnidades] = useState<Unidad[]>([]);
-  const [preguntas, setPreguntas] = useState<Pregunta[]>([]);
+  const [preguntas, setPreguntas] = useState<PreguntaApp[]>([]);
 
   const [selectedNivel, setSelectedNivel] = useState<string | null>(null);
   const [selectedMateria, setSelectedMateria] = useState<string | null>(null);
   const [selectedUnidad, setSelectedUnidad] = useState<string | null>(null);
 
   // Estados para la prueba
-  const [testQuestions, setTestQuestions] = useState<Pregunta[]>([]);
+  const [testQuestions, setTestQuestions] = useState<PreguntaApp[]>([]);
   const [testTitle, setTestTitle] = useState('');
   const [testHeader, setTestHeader] = useState('Nombre: __________________ Curso: _______');
   const [includeAnswerSheet, setIncludeAnswerSheet] = useState(true);
@@ -29,7 +55,7 @@ function App() {
   // Estados de carga
   const [loading, setLoading] = useState({ filters: true, questions: false });
 
-  // --- LÓGICA DE DATOS ---
+  // --- LÓGICA DE DATOS (ACTUALIZADA) ---
   useEffect(() => {
     const fetchFilters = async () => {
       setLoading(prev => ({ ...prev, filters: true }));
@@ -50,19 +76,40 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedUnidad) {
+    if (!selectedUnidad || !selectedMateria) {
       setPreguntas([]);
       return;
     }
     const fetchQuestions = async () => {
       setLoading(prev => ({ ...prev, questions: true }));
       try {
-        const { data, error } = await supabase
-          .from('preguntas')
-          .select('*, alternativas(*)')
-          .eq('unidad_id', selectedUnidad);
-        if (error) throw error;
-        setPreguntas(data || []);
+        // 1. Encontrar los quiz_sets que coincidan con la unidad y materia
+        const { data: quizSets, error: setsError } = await supabase
+          .from('quiz_sets')
+          .select('id')
+          .eq('unidad_id', selectedUnidad)
+          .eq('materia_id', selectedMateria);
+
+        if (setsError) throw setsError;
+        if (!quizSets || quizSets.length === 0) {
+          setPreguntas([]);
+          return;
+        }
+
+        const quizSetIds = quizSets.map(set => set.id);
+
+        // 2. Traer las preguntas de esos quiz_sets
+        const { data: questionsData, error: questionsError } = await supabase
+          .from('quiz_questions')
+          .select('*')
+          .in('quiz_set_id', quizSetIds);
+
+        if (questionsError) throw questionsError;
+
+        // 3. Transformar los datos para la app
+        const appQuestions = questionsData.map(transformDbQuestionToAppQuestion);
+        setPreguntas(appQuestions);
+        
       } catch (error) {
         console.error("Error fetching questions:", error);
       } finally {
@@ -70,9 +117,9 @@ function App() {
       }
     };
     fetchQuestions();
-  }, [selectedUnidad]);
+  }, [selectedUnidad, selectedMateria]);
 
-  // --- LÓGICA DE DRAG AND DROP ---
+  // --- LÓGICA DE DRAG AND DROP (sin cambios) ---
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -82,7 +129,6 @@ function App() {
     const { active, over } = event;
     if (!over) return;
 
-    // Caso 1: Mover desde el banco de preguntas al constructor
     if (active.data.current?.from === 'bank' && over.id === 'test-builder-area') {
       const questionToAdd = preguntas.find(p => p.id === active.id);
       if (questionToAdd && !testQuestions.some(q => q.id === questionToAdd.id)) {
@@ -91,7 +137,6 @@ function App() {
       return;
     }
 
-    // Caso 2: Reordenar dentro del constructor
     if (active.data.current?.from === 'builder' && over.id !== 'test-builder-area') {
       const oldIndex = testQuestions.findIndex(q => q.id === active.id);
       const newIndex = testQuestions.findIndex(q => q.id === over.id);
@@ -105,7 +150,7 @@ function App() {
     setTestQuestions(prev => prev.filter(q => q.id !== id));
   };
 
-  // --- LÓGICA DE GENERACIÓN DE PDF ---
+  // --- LÓGICA DE GENERACIÓN DE PDF (sin cambios) ---
   const generatePdf = () => {
     const doc = new jsPDF();
     let y = 20;
@@ -119,19 +164,16 @@ function App() {
         }
     };
 
-    // Título
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(testTitle, doc.internal.pageSize.width / 2, y, { align: 'center' });
+    doc.text(testTitle || 'Prueba Sin Título', doc.internal.pageSize.width / 2, y, { align: 'center' });
     y += 10;
 
-    // Encabezado
     doc.setFontSize(11);
     doc.setFont('helvetica', 'normal');
     doc.text(testHeader, margin, y);
     y += 15;
 
-    // Preguntas
     doc.setFont('helvetica', 'bold');
     testQuestions.forEach((q, index) => {
         const questionText = `${index + 1}. ${q.texto}`;
@@ -145,7 +187,7 @@ function App() {
 
         doc.setFont('helvetica', 'normal');
         q.alternativas.forEach((alt, altIndex) => {
-            const letter = String.fromCharCode(97 + altIndex); // a, b, c...
+            const letter = String.fromCharCode(97 + altIndex);
             const altText = `${letter}) ${alt.texto}`;
             const splitAlt = doc.splitTextToSize(altText, doc.internal.pageSize.width - margin * 2 - 5);
             
@@ -157,7 +199,6 @@ function App() {
         y += 5;
     });
 
-    // Hoja de Respuestas
     if (includeAnswerSheet) {
         doc.addPage();
         y = margin;
@@ -168,8 +209,8 @@ function App() {
         doc.setFontSize(11);
         doc.setFont('helvetica', 'normal');
         testQuestions.forEach((q, index) => {
-            const correctAnswer = q.alternativas.findIndex(alt => alt.es_correcta);
-            const correctLetter = correctAnswer !== -1 ? String.fromCharCode(97 + correctAnswer) : 'N/A';
+            const correctAnswerIndex = q.alternativas.findIndex(alt => alt.es_correcta);
+            const correctLetter = correctAnswerIndex !== -1 ? String.fromCharCode(97 + correctAnswerIndex) : 'N/A';
             doc.text(`${index + 1}. ${correctLetter.toUpperCase()}`, margin, y);
             y += 7;
             checkPageBreak(7);
