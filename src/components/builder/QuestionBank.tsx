@@ -29,12 +29,12 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
 
   const [loadingFilters, setLoadingFilters] = useState(true);
   const [loadingSets, setLoadingSets] = useState(false);
-  const [loadingQuestions, setLoadingQuestions] = useState<string | null>(null); // Stores the ID of the quiz being loaded
+  const [loadingQuestions, setLoadingQuestions] = useState<string | null>(null);
 
-  // 1. Cargar los filtros iniciales (Niveles, Materias, Unidades)
   useEffect(() => {
     const fetchFilters = async () => {
       try {
+        setLoadingFilters(true);
         const { data: nivelesData, error: nivelesError } = await supabase.from('niveles').select('*');
         if (nivelesError) throw nivelesError;
         setNiveles(nivelesData);
@@ -55,19 +55,19 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
     fetchFilters();
   }, []);
 
-  // 2. Cargar los Quiz Sets cuando cambian los filtros
   useEffect(() => {
     if (selectedNivel && selectedMateria && selectedUnidad) {
       const fetchQuizSets = async () => {
         setLoadingSets(true);
         setQuizSets([]);
+        setQuestionsByQuiz({}); // Limpiar preguntas anteriores al cambiar de filtro
         try {
-          let query = supabase.from('quiz_sets').select('id, title');
-          if (selectedNivel) query = query.eq('nivel_id', selectedNivel);
-          if (selectedMateria) query = query.eq('materia_id', selectedMateria);
-          if (selectedUnidad) query = query.eq('unidad_id', selectedUnidad);
+          const { data, error } = await supabase.from('quiz_sets')
+            .select('id, title')
+            .eq('nivel_id', selectedNivel)
+            .eq('materia_id', selectedMateria)
+            .eq('unidad_id', selectedUnidad);
           
-          const { data, error } = await query;
           if (error) throw error;
           setQuizSets(data);
         } catch (error) {
@@ -80,19 +80,19 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
     }
   }, [selectedNivel, selectedMateria, selectedUnidad]);
 
-  // 3. Cargar las preguntas de un Quiz Set específico cuando se abre
   const handleFetchQuestions = async (quizId: string) => {
-    if (!quizId || questionsByQuiz[quizId]) return; // No volver a cargar si ya existen
+    if (!quizId || questionsByQuiz[quizId]) return;
     setLoadingQuestions(quizId);
     try {
-      const { data, error } = await supabase.from('quiz_questions').select('*').eq('quiz_id', quizId);
+      // --- INICIO DE LA CORRECCIÓN 1: 'quiz_set_id' en lugar de 'quiz_id' ---
+      const { data, error } = await supabase.from('quiz_questions').select('*').eq('quiz_set_id', quizId);
       if (error) throw error;
       
       const formattedQuestions = data.map(q => ({
         id: q.id,
-        question: q.question,
+        question: q.text, // La columna se llama 'text' en tu DB, no 'question'
         correctAnswer: q.correct_answer,
-        incorrectAnswers: q.incorrect_answers,
+        incorrectAnswers: q.incorrect_answers || [], // Aseguramos que sea un array
         tags: q.tags,
       }));
 
@@ -113,33 +113,18 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
         <CardDescription>Filtra y selecciona preguntas de los quizzes existentes.</CardDescription>
       </CardHeader>
       <CardContent className="flex-1 flex flex-col overflow-hidden">
-        {/* FILTERS */}
         <div className="space-y-3 p-1">
           {loadingFilters ? (
-            <div className="space-y-2">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
+            <div className="space-y-2"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>
           ) : (
             <>
-              <Select value={selectedNivel} onValueChange={setSelectedNivel}>
-                <SelectTrigger><SelectValue placeholder="Selecciona un Nivel" /></SelectTrigger>
-                <SelectContent>{niveles.map(n => <SelectItem key={n.id} value={n.id}>{n.nombre}</SelectItem>)}</SelectContent>
-              </Select>
-              <Select value={selectedMateria} onValueChange={setSelectedMateria} disabled={!selectedNivel}>
-                <SelectTrigger><SelectValue placeholder="Selecciona una Materia" /></SelectTrigger>
-                <SelectContent>{filteredMaterias.map(m => <SelectItem key={m.id} value={m.id}>{m.nombre}</SelectItem>)}</SelectContent>
-              </Select>
-              <Select value={selectedUnidad} onValueChange={setSelectedUnidad} disabled={!selectedNivel || !selectedMateria}>
-                <SelectTrigger><SelectValue placeholder="Selecciona una Unidad" /></SelectTrigger>
-                <SelectContent>{unidades.map(u => <SelectItem key={u.id} value={u.id}>{u.nombre}</SelectItem>)}</SelectContent>
-              </Select>
+              <Select value={selectedNivel} onValueChange={setSelectedNivel}><SelectTrigger><SelectValue placeholder="Selecciona un Nivel" /></SelectTrigger><SelectContent>{niveles.map(n => <SelectItem key={n.id} value={n.id}>{n.nombre}</SelectItem>)}</SelectContent></Select>
+              <Select value={selectedMateria} onValueChange={setSelectedMateria} disabled={!selectedNivel}><SelectTrigger><SelectValue placeholder="Selecciona una Materia" /></SelectTrigger><SelectContent>{filteredMaterias.map(m => <SelectItem key={m.id} value={m.id}>{m.nombre}</SelectItem>)}</SelectContent></Select>
+              <Select value={selectedUnidad} onValueChange={setSelectedUnidad} disabled={!selectedNivel || !selectedMateria}><SelectTrigger><SelectValue placeholder="Selecciona una Unidad" /></SelectTrigger><SelectContent>{unidades.map(u => <SelectItem key={u.id} value={u.id}>{u.nombre}</SelectItem>)}</SelectContent></Select>
             </>
           )}
         </div>
 
-        {/* RESULTS */}
         <div className="flex-1 mt-4 overflow-y-auto">
           {loadingSets && <div className="text-center p-4 text-sm text-muted-foreground">Buscando quizzes...</div>}
           {!loadingSets && quizSets.length === 0 && selectedNivel && selectedMateria && selectedUnidad && (
@@ -152,15 +137,25 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
                   <AccordionTrigger className="text-sm font-medium">{set.title}</AccordionTrigger>
                   <AccordionContent>
                     {loadingQuestions === set.id && <div className="text-center p-2"><Loader2 className="h-4 w-4 animate-spin inline-block" /></div>}
+                    
+                    {/* --- INICIO DE LA CORRECCIÓN 2: Mostrar alternativas --- */}
                     {questionsByQuiz[set.id]?.map((q) => {
                       const isSelected = selectedQuestionIds.includes(q.id);
                       return (
-                        <div key={q.id} className="flex items-center justify-between p-2 hover:bg-accent rounded-md">
-                          <p className="text-xs flex-1 pr-2">{q.question}</p>
+                        <div key={q.id} className="flex items-start justify-between p-2 hover:bg-accent rounded-md">
+                          <div className="flex-1 pr-2">
+                            <p className="text-sm">{q.question}</p>
+                            <div className="pl-2 mt-1 text-xs border-l-2">
+                                <p className="text-green-600 font-semibold">{q.correctAnswer}</p>
+                                {q.incorrectAnswers.map((ans, idx) => (
+                                    <p key={idx} className="text-muted-foreground">{ans}</p>
+                                ))}
+                            </div>
+                          </div>
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-7 w-7"
+                            className="h-7 w-7 flex-shrink-0 mt-1"
                             onClick={() => onAddQuestion({ ...q, dndId: crypto.randomUUID() })}
                             disabled={isSelected}
                             aria-label={isSelected ? 'Pregunta añadida' : 'Añadir pregunta'}
