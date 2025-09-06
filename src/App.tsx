@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'; // <-- LÍNEA CORREGIDA
 import jsPDF from 'jspdf';
 import { supabase } from './integrations/supabase/client';
 import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB } from './types';
