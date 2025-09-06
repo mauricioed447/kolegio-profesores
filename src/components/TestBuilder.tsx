@@ -1,6 +1,7 @@
 import React from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import { useSortable } from '@dnd-kit/sortable';
+// Línea corregida: añadimos SortableContext y verticalListSortingStrategy
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'; 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Pregunta } from '../types';
 import { GripVertical, Trash2 } from 'lucide-react';
