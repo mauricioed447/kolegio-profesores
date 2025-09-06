@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'; // <-- LÍNEA CORREGIDA
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import jsPDF from 'jspdf';
 import { supabase } from './integrations/supabase/client';
 import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB } from './types';
@@ -23,7 +23,6 @@ const transformDbQuestionToAppQuestion = (dbQuestion: QuizQuestionFromDB): Pregu
     es_correcta: false,
   }));
   
-  // Juntamos y mezclamos las alternativas para que la correcta no siempre aparezca primera
   const allAlts = [correctAlt, ...incorrectAlts];
   const shuffledAlts = allAlts.sort(() => Math.random() - 0.5);
 
@@ -34,9 +33,7 @@ const transformDbQuestionToAppQuestion = (dbQuestion: QuizQuestionFromDB): Pregu
   };
 };
 
-
 function App() {
-  // Estados para filtros y datos
   const [niveles, setNiveles] = useState<Nivel[]>([]);
   const [materias, setMaterias] = useState<Materia[]>([]);
   const [unidades, setUnidades] = useState<Unidad[]>([]);
@@ -46,16 +43,13 @@ function App() {
   const [selectedMateria, setSelectedMateria] = useState<string | null>(null);
   const [selectedUnidad, setSelectedUnidad] = useState<string | null>(null);
 
-  // Estados para la prueba
   const [testQuestions, setTestQuestions] = useState<PreguntaApp[]>([]);
   const [testTitle, setTestTitle] = useState('');
   const [testHeader, setTestHeader] = useState('Nombre: __________________ Curso: _______');
   const [includeAnswerSheet, setIncludeAnswerSheet] = useState(true);
 
-  // Estados de carga
   const [loading, setLoading] = useState({ filters: true, questions: false });
 
-  // --- LÓGICA DE DATOS (ACTUALIZADA) ---
   useEffect(() => {
     const fetchFilters = async () => {
       setLoading(prev => ({ ...prev, filters: true }));
@@ -75,20 +69,23 @@ function App() {
     fetchFilters();
   }, []);
 
+  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (CORREGIDA) ---
   useEffect(() => {
-    if (!selectedUnidad || !selectedMateria) {
+    // Solo busca si tenemos los tres filtros seleccionados
+    if (!selectedNivel || !selectedMateria || !selectedUnidad) {
       setPreguntas([]);
       return;
     }
     const fetchQuestions = async () => {
       setLoading(prev => ({ ...prev, questions: true }));
       try {
-        // 1. Encontrar los quiz_sets que coincidan con la unidad y materia
+        // 1. Encontrar los quiz_sets que coincidan con NIVEL, MATERIA y UNIDAD
         const { data: quizSets, error: setsError } = await supabase
           .from('quiz_sets')
           .select('id')
-          .eq('unidad_id', selectedUnidad)
-          .eq('materia_id', selectedMateria);
+          .eq('nivel_id', selectedNivel) // <-- Filtro añadido
+          .eq('materia_id', selectedMateria)
+          .eq('unidad_id', selectedUnidad);
 
         if (setsError) throw setsError;
         if (!quizSets || quizSets.length === 0) {
@@ -106,7 +103,6 @@ function App() {
 
         if (questionsError) throw questionsError;
 
-        // 3. Transformar los datos para la app
         const appQuestions = questionsData.map(transformDbQuestionToAppQuestion);
         setPreguntas(appQuestions);
         
@@ -117,9 +113,8 @@ function App() {
       }
     };
     fetchQuestions();
-  }, [selectedUnidad, selectedMateria]);
+  }, [selectedNivel, selectedMateria, selectedUnidad]); // <-- Dependencias actualizadas
 
-  // --- LÓGICA DE DRAG AND DROP (sin cambios) ---
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -150,7 +145,6 @@ function App() {
     setTestQuestions(prev => prev.filter(q => q.id !== id));
   };
 
-  // --- LÓGICA DE GENERACIÓN DE PDF (sin cambios) ---
   const generatePdf = () => {
     const doc = new jsPDF();
     let y = 20;
@@ -174,7 +168,6 @@ function App() {
     doc.text(testHeader, margin, y);
     y += 15;
 
-    doc.setFont('helvetica', 'bold');
     testQuestions.forEach((q, index) => {
         const questionText = `${index + 1}. ${q.texto}`;
         const splitQuestion = doc.splitTextToSize(questionText, doc.internal.pageSize.width - margin * 2);
