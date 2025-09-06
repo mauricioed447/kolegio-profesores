@@ -3,11 +3,11 @@ import { useDraggable } from '@dnd-kit/core';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Nivel, Materia, Unidad, Pregunta } from '../types';
+import { Nivel, Materia, Unidad, PreguntaApp } from '../types';
 import { Loader2, PlusCircle } from 'lucide-react';
 
 // Componente para una pregunta individual arrastrable
-const DraggableQuestionItem = ({ question }: { question: Pregunta }) => {
+const DraggableQuestionItem = ({ question }: { question: PreguntaApp }) => {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: question.id,
     data: { from: 'bank', question },
@@ -35,18 +35,17 @@ const DraggableQuestionItem = ({ question }: { question: Pregunta }) => {
   );
 };
 
-
 interface QuestionBankProps {
     niveles: Nivel[];
     materias: Materia[];
     unidades: Unidad[];
-    preguntas: Pregunta[];
+    preguntas: PreguntaApp[];
     selectedNivel: string | null;
-    setSelectedNivel: (value: string) => void;
+    setSelectedNivel: (value: string | null) => void;
     selectedMateria: string | null;
-    setSelectedMateria: (value: string) => void;
+    setSelectedMateria: (value: string | null) => void;
     selectedUnidad: string | null;
-    setSelectedUnidad: (value: string) => void;
+    setSelectedUnidad: (value: string | null) => void;
     isLoading: boolean;
 }
 
@@ -58,8 +57,18 @@ const QuestionBank: React.FC<QuestionBankProps> = ({
     isLoading
 }) => {
     
-  const filteredMaterias = materias.filter(m => m.nivel_id === selectedNivel);
-  const filteredUnidades = unidades.filter(u => u.materia_id === selectedMateria);
+  const filteredMaterias = selectedNivel ? materias.filter(m => m.nivel_id === selectedNivel) : [];
+
+  const handleNivelChange = (value: string) => {
+    setSelectedNivel(value);
+    setSelectedMateria(null);
+    setSelectedUnidad(null);
+  };
+  
+  const handleMateriaChange = (value: string) => {
+    setSelectedMateria(value);
+    setSelectedUnidad(null);
+  };
 
   return (
     <div className="lg:col-span-3 bg-white p-4 rounded-lg shadow-md flex flex-col">
@@ -70,17 +79,17 @@ const QuestionBank: React.FC<QuestionBankProps> = ({
         <AccordionItem value="item-1">
           <AccordionTrigger>Filtros de Búsqueda</AccordionTrigger>
           <AccordionContent className="space-y-4">
-            <Select onValueChange={setSelectedNivel}>
+            <Select onValueChange={handleNivelChange} value={selectedNivel ?? undefined}>
               <SelectTrigger><SelectValue placeholder="Selecciona un Nivel" /></SelectTrigger>
               <SelectContent>{niveles.map(n => <SelectItem key={n.id} value={n.id}>{n.nombre}</SelectItem>)}</SelectContent>
             </Select>
-            <Select onValueChange={setSelectedMateria} disabled={!selectedNivel}>
+            <Select onValueChange={handleMateriaChange} disabled={!selectedNivel} value={selectedMateria ?? undefined}>
               <SelectTrigger><SelectValue placeholder="Selecciona una Materia" /></SelectTrigger>
               <SelectContent>{filteredMaterias.map(m => <SelectItem key={m.id} value={m.id}>{m.nombre}</SelectItem>)}</SelectContent>
             </Select>
-            <Select onValueChange={setSelectedUnidad} disabled={!selectedMateria}>
+            <Select onValueChange={setSelectedUnidad} disabled={!selectedMateria} value={selectedUnidad ?? undefined}>
               <SelectTrigger><SelectValue placeholder="Selecciona una Unidad" /></SelectTrigger>
-              <SelectContent>{filteredUnidades.map(u => <SelectItem key={u.id} value={u.id}>{u.nombre}</SelectItem>)}</SelectContent>
+              <SelectContent>{unidades.map(u => <SelectItem key={u.id} value={u.id}>{u.nombre}</SelectItem>)}</SelectContent>
             </Select>
           </AccordionContent>
         </AccordionItem>
@@ -97,7 +106,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({
                 preguntas.map(q => <DraggableQuestionItem key={q.id} question={q} />)
             ) : (
                 <div className="text-center text-sm text-gray-500 py-10">
-                    <p>{selectedUnidad ? "No hay preguntas en esta unidad." : "Selecciona una unidad para ver las preguntas."}</p>
+                    <p>{selectedUnidad && selectedMateria ? "No hay preguntas para esta combinación." : "Completa los filtros para ver preguntas."}</p>
                 </div>
             )}
         </div>
