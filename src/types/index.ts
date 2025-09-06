@@ -1,23 +1,9 @@
-// RUTA: src/types/index.ts
+// Este es un tipo genérico para la base de datos autogenerada por Supabase.
+// Si no tienes los tipos, puedes usar 'any' temporalmente,
+// pero es muy recomendable generarlos para tener autocompletado y seguridad.
+export type Database = any;
 
-export interface Question {
-  id: string;
-  question: string;
-  correctAnswer: string;
-  incorrectAnswers: string[];
-  tags: string[] | null;
-}
-
-export interface QuizSet {
-  id: string;
-  title: string;
-  created_at: string;
-  nivel_id: string | null;
-  materia_id: string | null;
-  unidad_id: string | null;
-  questions: Question[]; // Las preguntas se cargarán por separado
-}
-
+// Tipos específicos para nuestra aplicación
 export interface Nivel {
   id: string;
   nombre: string;
@@ -32,10 +18,19 @@ export interface Materia {
 export interface Unidad {
   id: string;
   nombre: string;
+  materia_id: string;
 }
 
-// Un tipo especial para las preguntas seleccionadas que incluye
-// un ID único para la funcionalidad de arrastrar y soltar (drag-and-drop).
-export type SelectedQuestion = Question & {
-  dndId: string;
-};
+export interface Alternativa {
+  id: string;
+  texto: string;
+  es_correcta: boolean;
+  pregunta_id: string;
+}
+
+export interface Pregunta {
+  id: string;
+  texto: string;
+  unidad_id: string;
+  alternativas: Alternativa[];
+}
