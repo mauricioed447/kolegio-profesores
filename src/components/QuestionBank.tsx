@@ -6,7 +6,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Nivel, Materia, Unidad, PreguntaApp } from '../types';
 import { Loader2, PlusCircle } from 'lucide-react';
 
-// Componente para una pregunta individual arrastrable
 const DraggableQuestionItem = ({ question }: { question: PreguntaApp }) => {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: question.id,
@@ -79,6 +78,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({
         <AccordionItem value="item-1">
           <AccordionTrigger>Filtros de Búsqueda</AccordionTrigger>
           <AccordionContent className="space-y-4">
+            {/* CORRECCIÓN: Usamos 'value={... ?? undefined}' para evitar el warning de 'uncontrolled to controlled' */}
             <Select onValueChange={handleNivelChange} value={selectedNivel ?? undefined}>
               <SelectTrigger><SelectValue placeholder="Selecciona un Nivel" /></SelectTrigger>
               <SelectContent>{niveles.map(n => <SelectItem key={n.id} value={n.id}>{n.nombre}</SelectItem>)}</SelectContent>
@@ -106,7 +106,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({
                 preguntas.map(q => <DraggableQuestionItem key={q.id} question={q} />)
             ) : (
                 <div className="text-center text-sm text-gray-500 py-10">
-                    <p>{selectedUnidad && selectedMateria ? "No hay preguntas para esta combinación." : "Completa los filtros para ver preguntas."}</p>
+                    <p>{selectedUnidad ? "No hay preguntas para esta combinación." : "Completa los filtros para ver preguntas."}</p>
                 </div>
             )}
         </div>
