@@ -1,9 +1,8 @@
 // Este es un tipo genérico para la base de datos autogenerada por Supabase.
-// Si no tienes los tipos, puedes usar 'any' temporalmente,
-// pero es muy recomendable generarlos para tener autocompletado y seguridad.
 export type Database = any;
 
-// Tipos específicos para nuestra aplicación
+// --- Tipos que coinciden con tu Base de Datos ---
+
 export interface Nivel {
   id: string;
   nombre: string;
@@ -15,22 +14,33 @@ export interface Materia {
   nivel_id: string;
 }
 
+// La tabla 'unidades' es independiente
 export interface Unidad {
   id: string;
   nombre: string;
-  materia_id: string;
 }
 
-export interface Alternativa {
+// Representa una fila de tu tabla 'quiz_questions'
+export interface QuizQuestionFromDB {
   id: string;
+  text: string;
+  correct_answer: string;
+  incorrect_answers: string[] | null;
+  quiz_set_id: string;
+}
+
+// --- Tipos que usará la Aplicación internamente ---
+
+// La app necesita un formato unificado para las alternativas
+export interface AlternativaApp {
+  id: string; // Usaremos el texto como ID para simplicidad
   texto: string;
   es_correcta: boolean;
-  pregunta_id: string;
 }
 
-export interface Pregunta {
+// Este es el objeto 'Pregunta' que usará toda la aplicación después de la transformación
+export interface PreguntaApp {
   id: string;
   texto: string;
-  unidad_id: string;
-  alternativas: Alternativa[];
+  alternativas: AlternativaApp[];
 }
