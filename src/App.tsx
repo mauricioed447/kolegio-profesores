@@ -69,23 +69,21 @@ function App() {
     fetchFilters();
   }, []);
 
-  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (CORREGIDA) ---
+  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (CORREGIDA Y SIMPLIFICADA) ---
   useEffect(() => {
-    // Solo busca si tenemos los tres filtros seleccionados
-    if (!selectedNivel || !selectedMateria || !selectedUnidad) {
+    // Solo busca si tenemos una Unidad seleccionada
+    if (!selectedUnidad) {
       setPreguntas([]);
       return;
     }
     const fetchQuestions = async () => {
       setLoading(prev => ({ ...prev, questions: true }));
       try {
-        // 1. Encontrar los quiz_sets que coincidan con NIVEL, MATERIA y UNIDAD
+        // 1. Encontrar los quiz_sets que coincidan SOLO con la UNIDAD
         const { data: quizSets, error: setsError } = await supabase
           .from('quiz_sets')
           .select('id')
-          .eq('nivel_id', selectedNivel) // <-- Filtro añadido
-          .eq('materia_id', selectedMateria)
-          .eq('unidad_id', selectedUnidad);
+          .eq('unidad_id', selectedUnidad); // <-- Filtro simplificado
 
         if (setsError) throw setsError;
         if (!quizSets || quizSets.length === 0) {
@@ -113,7 +111,7 @@ function App() {
       }
     };
     fetchQuestions();
-  }, [selectedNivel, selectedMateria, selectedUnidad]); // <-- Dependencias actualizadas
+  }, [selectedUnidad]); // <-- Ahora solo depende de la unidad
 
   const sensors = useSensors(
     useSensor(PointerSensor),
