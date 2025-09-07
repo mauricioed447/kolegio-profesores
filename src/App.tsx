@@ -1,36 +1,51 @@
 import { useState, useEffect } from 'react';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import jsPDF from 'jspdf';
 import { supabase } from './integrations/supabase/client';
-import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB, AlternativaApp } from './types';
+import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB } from './types';
 import QuestionBank from './components/QuestionBank';
 import TestBuilder from './components/TestBuilder';
 import Configuration from './components/Configuration';
 import { Loader2 } from 'lucide-react';
 
-// Función para transformar los datos de la DB al formato que la App necesita
+// Transforma una fila de DB al modelo usado en la app
 const transformDbQuestionToAppQuestion = (dbQuestion: QuizQuestionFromDB): PreguntaApp => {
-  const correctAlt: AlternativaApp = {
+  const correctAlt = {
     id: dbQuestion.correct_answer,
     texto: dbQuestion.correct_answer,
     es_correcta: true,
   };
-  
-  const incorrectAlts: AlternativaApp[] = (dbQuestion.incorrect_answers || []).map(text => ({
+
+  const incorrectAlts = (dbQuestion.incorrect_answers || []).map((text) => ({
     id: text,
     texto: text,
     es_correcta: false,
   }));
-  
-  const allAlts = [correctAlt, ...incorrectAlts];
-  const shuffledAlts = allAlts.sort(() => Math.random() - 0.5);
+
+  const alternativas = [correctAlt, ...incorrectAlts].sort(() => Math.random() - 0.5);
+
+  // Fallback de campo del enunciado por si la columna es `question`
+  const texto = (dbQuestion as any).text ?? (dbQuestion as any).question ?? '';
 
   return {
     id: dbQuestion.id,
-    texto: dbQuestion.text,
-    alternativas: shuffledAlts,
-  };
+    texto,
+    alternativas,
+  } as PreguntaApp;
 };
 
 function App() {
@@ -50,9 +65,10 @@ function App() {
 
   const [loading, setLoading] = useState({ filters: true, questions: false });
 
+  // Cargar filtros
   useEffect(() => {
     const fetchFilters = async () => {
-      setLoading(prev => ({ ...prev, filters: true }));
+      setLoading((prev) => ({ ...prev, filters: true }));
       try {
         const { data: nivelesData } = await supabase.from('niveles').select('*');
         const { data: materiasData } = await supabase.from('materias').select('*');
@@ -61,25 +77,25 @@ function App() {
         setMaterias(materiasData || []);
         setUnidades(unidadesData || []);
       } catch (error) {
-        console.error("Error fetching filters:", error);
+        console.error('Error fetching filters:', error);
       } finally {
-        setLoading(prev => ({ ...prev, filters: false }));
+        setLoading((prev) => ({ ...prev, filters: false }));
       }
     };
     fetchFilters();
   }, []);
 
-  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (ROBUSTA Y CORREGIDA) ---
+  // Buscar preguntas cuando hay NIVEL + MATERIA + UNIDAD seleccionados
   useEffect(() => {
     if (!selectedNivel || !selectedMateria || !selectedUnidad) {
       setPreguntas([]);
       return;
     }
-    
+
     const fetchQuestions = async () => {
-      setLoading(prev => ({ ...prev, questions: true }));
+      setLoading((prev) => ({ ...prev, questions: true }));
       try {
-        // 1. Encontrar los quiz_sets que coincidan con los tres filtros.
+        // 1) IDs de quiz_sets que cumplan los TRES filtros
         const { data: quizSets, error: setsError } = await supabase
           .from('quiz_sets')
           .select('id')
@@ -93,40 +109,23 @@ function App() {
           return;
         }
 
-        const quizSetIds = quizSets.map(set => set.id);
+        const quizSetIds = quizSets.map((s) => s.id);
 
-        // 2. Crear un array de promesas, una por cada quiz_set_id.
-        // Esto evita el error de URL demasiado larga de la consulta .in().
-        const questionPromises = quizSetIds.map(id =>
-          supabase.from('quiz_questions').select('*').eq('quiz_set_id', id)
-        );
+        // 2) Traer preguntas por los IDs de quiz (columna correcta: quiz_id)
+        const { data: questionsData, error: questionsError } = await supabase
+          .from('quiz_questions')
+          .select('*')
+          .in('quiz_id', quizSetIds);
 
-        // 3. Ejecutar todas las peticiones en paralelo.
-        const questionResults = await Promise.all(questionPromises);
+        if (questionsError) throw questionsError;
 
-        // 4. Procesar y unificar los resultados de todas las peticiones.
-        const allQuestionsData: QuizQuestionFromDB[] = [];
-        for (const result of questionResults) {
-          if (result.error) {
-            // Si una de las muchas peticiones falla, lo notificamos pero continuamos.
-            console.error("Error fetching questions for a specific quiz set:", result.error);
-            continue; 
-          }
-          if (result.data) {
-            allQuestionsData.push(...result.data);
-          }
-        }
-        
-        // 5. Transformar y actualizar el estado final.
-        const appQuestions = allQuestionsData.map(transformDbQuestionToAppQuestion);
+        const appQuestions = (questionsData || []).map(transformDbQuestionToAppQuestion);
         setPreguntas(appQuestions);
-        
       } catch (error) {
-        // Captura errores generales (ej: fallo en la búsqueda de quiz_sets)
-        console.error("A general error occurred while fetching questions:", error);
-        setPreguntas([]); // Asegurarse de limpiar las preguntas si hay un error
+        console.error('Error fetching questions:', error);
+        setPreguntas([]);
       } finally {
-        setLoading(prev => ({ ...prev, questions: false }));
+        setLoading((prev) => ({ ...prev, questions: false }));
       }
     };
 
@@ -143,27 +142,24 @@ function App() {
     if (!over) return;
 
     if (active.data.current?.from === 'bank' && over.id === 'test-builder-area') {
-      const questionToAdd = preguntas.find(p => p.id === active.id);
-      if (questionToAdd && !testQuestions.some(q => q.id === questionToAdd.id)) {
-        setTestQuestions(prev => [...prev, questionToAdd]);
+      const questionToAdd = preguntas.find((p) => p.id === active.id);
+      if (questionToAdd && !testQuestions.some((q) => q.id === questionToAdd.id)) {
+        setTestQuestions((prev) => [...prev, questionToAdd]);
       }
       return;
     }
 
-    if (active.data.current?.from === 'builder' && over.id !== active.id) {
-        const oldIndex = testQuestions.findIndex(q => q.id === active.id);
-        const newIndex = over.id === 'test-builder-area' 
-            ? testQuestions.length -1 
-            : testQuestions.findIndex(q => q.id === over.id);
-
-        if (oldIndex !== -1 && newIndex !== -1) {
-            setTestQuestions(prev => arrayMove(prev, oldIndex, newIndex));
-        }
+    if (active.data.current?.from === 'builder' && over.id !== 'test-builder-area') {
+      const oldIndex = testQuestions.findIndex((q) => q.id === active.id);
+      const newIndex = testQuestions.findIndex((q) => q.id === over.id);
+      if (oldIndex !== newIndex) {
+        setTestQuestions((prev) => arrayMove(prev, oldIndex, newIndex));
+      }
     }
   };
-  
+
   const removeQuestion = (id: string) => {
-    setTestQuestions(prev => prev.filter(q => q.id !== id));
+    setTestQuestions((prev) => prev.filter((q) => q.id !== id));
   };
 
   const generatePdf = () => {
@@ -173,10 +169,10 @@ function App() {
     const margin = 15;
 
     const checkPageBreak = (neededHeight: number) => {
-        if (y + neededHeight > pageHeight - margin) {
-            doc.addPage();
-            y = margin;
-        }
+      if (y + neededHeight > pageHeight - margin) {
+        doc.addPage();
+        y = margin;
+      }
     };
 
     doc.setFontSize(16);
@@ -190,45 +186,45 @@ function App() {
     y += 15;
 
     testQuestions.forEach((q, index) => {
-        const questionText = `${index + 1}. ${q.texto}`;
-        const splitQuestion = doc.splitTextToSize(questionText, doc.internal.pageSize.width - margin * 2);
-        
-        checkPageBreak(splitQuestion.length * 5 + q.alternativas.length * 5 + 5);
-        
-        doc.setFont('helvetica', 'bold');
-        doc.text(splitQuestion, margin, y);
-        y += splitQuestion.length * 5 + 2;
+      const questionText = `${index + 1}. ${q.texto}`;
+      const splitQuestion = doc.splitTextToSize(questionText, doc.internal.pageSize.width - margin * 2);
 
-        doc.setFont('helvetica', 'normal');
-        q.alternativas.forEach((alt, altIndex) => {
-            const letter = String.fromCharCode(97 + altIndex);
-            const altText = `${letter}) ${alt.texto}`;
-            const splitAlt = doc.splitTextToSize(altText, doc.internal.pageSize.width - margin * 2 - 5);
-            
-            checkPageBreak(splitAlt.length * 5);
+      checkPageBreak(splitQuestion.length * 5 + q.alternativas.length * 5 + 5);
 
-            doc.text(splitAlt, margin + 5, y);
-            y += splitAlt.length * 5;
-        });
-        y += 5;
+      doc.setFont('helvetica', 'bold');
+      doc.text(splitQuestion, margin, y);
+      y += splitQuestion.length * 5 + 2;
+
+      doc.setFont('helvetica', 'normal');
+      q.alternativas.forEach((alt, altIndex) => {
+        const letter = String.fromCharCode(97 + altIndex);
+        const altText = `${letter}) ${alt.texto}`;
+        const splitAlt = doc.splitTextToSize(altText, doc.internal.pageSize.width - margin * 2 - 5);
+
+        checkPageBreak(splitAlt.length * 5);
+
+        doc.text(splitAlt, margin + 5, y);
+        y += splitAlt.length * 5;
+      });
+      y += 5;
     });
 
     if (includeAnswerSheet) {
-        doc.addPage();
-        y = margin;
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Hoja de Respuestas', doc.internal.pageSize.width / 2, y, { align: 'center' });
-        y += 10;
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'normal');
-        testQuestions.forEach((q, index) => {
-            const correctAnswerIndex = q.alternativas.findIndex(alt => alt.es_correcta);
-            const correctLetter = correctAnswerIndex !== -1 ? String.fromCharCode(97 + correctAnswerIndex) : 'N/A';
-            doc.text(`${index + 1}. ${correctLetter.toUpperCase()}`, margin, y);
-            y += 7;
-            checkPageBreak(7);
-        });
+      doc.addPage();
+      y = margin;
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Hoja de Respuestas', doc.internal.pageSize.width / 2, y, { align: 'center' });
+      y += 10;
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      testQuestions.forEach((q, index) => {
+        const correctAnswerIndex = q.alternativas.findIndex((alt) => alt.es_correcta);
+        const correctLetter = correctAnswerIndex !== -1 ? String.fromCharCode(97 + correctAnswerIndex) : 'N/A';
+        doc.text(`${index + 1}. ${correctLetter.toUpperCase()}`, margin, y);
+        y += 7;
+        checkPageBreak(7);
+      });
     }
 
     doc.save(`${testTitle.replace(/ /g, '_') || 'prueba'}.pdf`);
