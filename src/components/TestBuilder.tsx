@@ -16,6 +16,7 @@ type Props = {
   onSetCorrectAlternative: (qId: string, altId: string) => void;
   onAddAlternative: (qId: string) => void;
   onRemoveAlternative: (qId: string, altId: string) => void;
+  onAddManualQuestion: () => void;              // 👈 nuevo
 };
 
 const SortableQuestionRow: React.FC<
@@ -56,19 +57,24 @@ const TestBuilder: React.FC<Props> = ({
   onSetCorrectAlternative,
   onAddAlternative,
   onRemoveAlternative,
+  onAddManualQuestion,
 }) => {
   return (
     <Card className="lg:col-span-5 h-full">
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Constructor de la Prueba</CardTitle>
+        <Button size="sm" onClick={onAddManualQuestion} title="Agregar nueva pregunta manual">
+          <Plus className="h-4 w-4 mr-1" /> Nueva pregunta manual
+        </Button>
       </CardHeader>
+
       <CardContent>
         {questions.length === 0 && (
           <div
             id="test-builder-area"
             className="h-40 border-2 border-dashed rounded-md flex items-center justify-center text-sm text-muted-foreground"
           >
-            Agrega preguntas con el botón “+” desde la izquierda.
+            Agrega preguntas con el botón “+” (izquierda) o crea una con “Nueva pregunta manual”.
           </div>
         )}
 
@@ -95,7 +101,6 @@ const TestBuilder: React.FC<Props> = ({
                       <label className="text-xs text-muted-foreground block mb-1">
                         Pregunta
                       </label>
-                      {/* textarea nativo estilizado */}
                       <textarea
                         value={q.texto}
                         onChange={(e) => onUpdateQuestionText(q.id, e.target.value)}
@@ -110,11 +115,7 @@ const TestBuilder: React.FC<Props> = ({
                       </label>
                       <div className="space-y-2">
                         {q.alternativas.map((a, i) => (
-                          <div
-                            key={a.id}
-                            className="flex items-center gap-2"
-                          >
-                            {/* radio correcta */}
+                          <div key={a.id} className="flex items-center gap-2">
                             <input
                               type="radio"
                               name={`correct-${q.id}`}
@@ -123,15 +124,11 @@ const TestBuilder: React.FC<Props> = ({
                               className="h-4 w-4"
                               aria-label="Marcar como correcta"
                             />
-                            {/* texto alternativa */}
                             <Input
                               value={a.texto}
-                              onChange={(e) =>
-                                onUpdateAlternativeText(q.id, a.id, e.target.value)
-                              }
+                              onChange={(e) => onUpdateAlternativeText(q.id, a.id, e.target.value)}
                               className="flex-1"
                             />
-                            {/* eliminar alternativa */}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -149,11 +146,7 @@ const TestBuilder: React.FC<Props> = ({
                       </div>
 
                       <div className="mt-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => onAddAlternative(q.id)}
-                        >
+                        <Button variant="secondary" size="sm" onClick={() => onAddAlternative(q.id)}>
                           <Plus className="h-4 w-4 mr-1" /> Agregar alternativa
                         </Button>
                       </div>
