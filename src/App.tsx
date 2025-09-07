@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import jsPDF from 'jspdf';
 import {
   DndContext,
   closestCenter,
@@ -14,145 +15,64 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import jsPDF from 'jspdf';
-import { supabase } from './integrations/supabase/client';
-import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB } from './types';
-import QuestionBank from './components/QuestionBank';
+
 import TestBuilder from './components/TestBuilder';
 import Configuration from './components/Configuration';
-import { Loader2 } from 'lucide-react';
 
-// Transforma una fila de DB al modelo usado en la app
-const transformDbQuestionToAppQuestion = (dbQuestion: QuizQuestionFromDB): PreguntaApp => {
-  const correctAlt = {
-    id: dbQuestion.correct_answer,
-    texto: dbQuestion.correct_answer,
-    es_correcta: true,
-  };
+// 👇 usamos el QuestionBank “builder”
+import QuestionBank from './components/builder/QuestionBank';
 
-  const incorrectAlts = (dbQuestion.incorrect_answers || []).map((text) => ({
-    id: text,
-    texto: text,
-    es_correcta: false,
-  }));
+// Tipado mínimo para el constructor (ajústalo si ya lo tienes en ./types)
+export interface Alternativa {
+  id: string;
+  texto: string;
+  es_correcta: boolean;
+}
 
-  const alternativas = [correctAlt, ...incorrectAlts].sort(() => Math.random() - 0.5);
-
-  // Fallback de campo del enunciado por si la columna es `question`
-  const texto = (dbQuestion as any).text ?? (dbQuestion as any).question ?? '';
-
-  return {
-    id: dbQuestion.id,
-    texto,
-    alternativas,
-  } as PreguntaApp;
-};
+export interface PreguntaApp {
+  id: string;
+  texto: string;
+  alternativas: Alternativa[];
+}
 
 function App() {
-  const [niveles, setNiveles] = useState<Nivel[]>([]);
-  const [materias, setMaterias] = useState<Materia[]>([]);
-  const [unidades, setUnidades] = useState<Unidad[]>([]);
-  const [preguntas, setPreguntas] = useState<PreguntaApp[]>([]);
-
-  const [selectedNivel, setSelectedNivel] = useState<string | null>(null);
-  const [selectedMateria, setSelectedMateria] = useState<string | null>(null);
-  const [selectedUnidad, setSelectedUnidad] = useState<string | null>(null);
-
   const [testQuestions, setTestQuestions] = useState<PreguntaApp[]>([]);
   const [testTitle, setTestTitle] = useState('');
   const [testHeader, setTestHeader] = useState('Nombre: __________________ Curso: _______');
   const [includeAnswerSheet, setIncludeAnswerSheet] = useState(true);
 
-  const [loading, setLoading] = useState({ filters: true, questions: false });
-
-  // Cargar filtros
-  useEffect(() => {
-    const fetchFilters = async () => {
-      setLoading((prev) => ({ ...prev, filters: true }));
-      try {
-        const { data: nivelesData } = await supabase.from('niveles').select('*');
-        const { data: materiasData } = await supabase.from('materias').select('*');
-        const { data: unidadesData } = await supabase.from('unidades').select('*');
-        setNiveles(nivelesData || []);
-        setMaterias(materiasData || []);
-        setUnidades(unidadesData || []);
-      } catch (error) {
-        console.error('Error fetching filters:', error);
-      } finally {
-        setLoading((prev) => ({ ...prev, filters: false }));
-      }
-    };
-    fetchFilters();
-  }, []);
-
-  // Buscar preguntas cuando hay NIVEL + MATERIA + UNIDAD seleccionados
-  useEffect(() => {
-    if (!selectedNivel || !selectedMateria || !selectedUnidad) {
-      setPreguntas([]);
-      return;
-    }
-
-    const fetchQuestions = async () => {
-      setLoading((prev) => ({ ...prev, questions: true }));
-      try {
-        // 1) IDs de quiz_sets que cumplan los TRES filtros
-        const { data: quizSets, error: setsError } = await supabase
-          .from('quiz_sets')
-          .select('id')
-          .eq('nivel_id', selectedNivel)
-          .eq('materia_id', selectedMateria)
-          .eq('unidad_id', selectedUnidad);
-
-        if (setsError) throw setsError;
-        if (!quizSets || quizSets.length === 0) {
-          setPreguntas([]);
-          return;
-        }
-
-        const quizSetIds = quizSets.map((s) => s.id);
-
-        // 2) Traer preguntas por los IDs de quiz (columna correcta: quiz_id)
-        const { data: questionsData, error: questionsError } = await supabase
-          .from('quiz_questions')
-          .select('*')
-          .in('quiz_id', quizSetIds);
-
-        if (questionsError) throw questionsError;
-
-        const appQuestions = (questionsData || []).map(transformDbQuestionToAppQuestion);
-        setPreguntas(appQuestions);
-      } catch (error) {
-        console.error('Error fetching questions:', error);
-        setPreguntas([]);
-      } finally {
-        setLoading((prev) => ({ ...prev, questions: false }));
-      }
-    };
-
-    fetchQuestions();
-  }, [selectedNivel, selectedMateria, selectedUnidad]);
-
+  // DnD SOLO para reordenar dentro del constructor
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  // 👉 Agregar desde el botón +
+  const handleAddFromBank = (q: any) => {
+    // q viene del banco con forma { id, question?, text?, correctAnswer, incorrectAnswers[] }
+    const texto = q.question ?? q.text ?? '';
+    if (!texto) return;
+
+    if (testQuestions.some((t) => t.id === q.id)) return;
+
+    const alternativas: Alternativa[] = [
+      { id: q.correctAnswer, texto: q.correctAnswer, es_correcta: true },
+      ...(q.incorrectAnswers || []).map((t: string) => ({ id: t, texto: t, es_correcta: false })),
+    ].sort(() => Math.random() - 0.5);
+
+    setTestQuestions((prev) => [...prev, { id: q.id, texto, alternativas }]);
+  };
+
+  // 🚫 Eliminado el “drop desde banco”
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
 
-    if (active.data.current?.from === 'bank' && over.id === 'test-builder-area') {
-      const questionToAdd = preguntas.find((p) => p.id === active.id);
-      if (questionToAdd && !testQuestions.some((q) => q.id === questionToAdd.id)) {
-        setTestQuestions((prev) => [...prev, questionToAdd]);
-      }
-      return;
-    }
-
+    // Reordenar SOLO dentro del constructor
     if (active.data.current?.from === 'builder' && over.id !== 'test-builder-area') {
       const oldIndex = testQuestions.findIndex((q) => q.id === active.id);
       const newIndex = testQuestions.findIndex((q) => q.id === over.id);
-      if (oldIndex !== newIndex) {
+      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
         setTestQuestions((prev) => arrayMove(prev, oldIndex, newIndex));
       }
     }
@@ -238,38 +158,27 @@ function App() {
           <h1 className="text-3xl font-bold text-gray-800">Kolegio Test Builder</h1>
         </header>
 
-        {loading.filters ? (
-          <div className="flex justify-center items-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        ) : (
-          <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <QuestionBank
-              niveles={niveles}
-              materias={materias}
-              unidades={unidades}
-              preguntas={preguntas}
-              selectedNivel={selectedNivel}
-              setSelectedNivel={setSelectedNivel}
-              selectedMateria={selectedMateria}
-              setSelectedMateria={setSelectedMateria}
-              selectedUnidad={selectedUnidad}
-              setSelectedUnidad={setSelectedUnidad}
-              isLoading={loading.questions}
-            />
-            <TestBuilder questions={testQuestions} onRemove={removeQuestion} />
-            <Configuration
-              title={testTitle}
-              setTitle={setTestTitle}
-              header={testHeader}
-              setHeader={setTestHeader}
-              includeAnswerSheet={includeAnswerSheet}
-              setIncludeAnswerSheet={setIncludeAnswerSheet}
-              onGeneratePdf={generatePdf}
-              isTestEmpty={testQuestions.length === 0}
-            />
-          </main>
-        )}
+        <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Banco de preguntas con botón + */}
+          <QuestionBank
+            onAddQuestion={handleAddFromBank}
+            selectedQuestionIds={testQuestions.map((q) => q.id)}
+          />
+
+          {/* Constructor (reordenar dentro con DnD) */}
+          <TestBuilder questions={testQuestions} onRemove={removeQuestion} />
+
+          <Configuration
+            title={testTitle}
+            setTitle={setTestTitle}
+            header={testHeader}
+            setHeader={setTestHeader}
+            includeAnswerSheet={includeAnswerSheet}
+            setIncludeAnswerSheet={setIncludeAnswerSheet}
+            onGeneratePdf={generatePdf}
+            isTestEmpty={testQuestions.length === 0}
+          />
+        </main>
       </div>
     </DndContext>
   );
