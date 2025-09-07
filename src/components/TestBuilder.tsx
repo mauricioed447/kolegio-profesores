@@ -4,7 +4,6 @@ import { CSS } from '@dnd-kit/utilities';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { GripVertical, Trash2, Plus, X } from 'lucide-react';
 
 import type { PreguntaApp } from '@/App';
@@ -96,10 +95,12 @@ const TestBuilder: React.FC<Props> = ({
                       <label className="text-xs text-muted-foreground block mb-1">
                         Pregunta
                       </label>
-                      <Textarea
+                      {/* textarea nativo estilizado */}
+                      <textarea
                         value={q.texto}
                         onChange={(e) => onUpdateQuestionText(q.id, e.target.value)}
-                        rows={2}
+                        rows={3}
+                        className="w-full min-h-[72px] text-sm border rounded-md bg-background p-2 outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
 
