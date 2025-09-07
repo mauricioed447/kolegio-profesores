@@ -9,20 +9,12 @@ import {
   useSensors,
   DragEndEvent,
 } from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
+import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 
 import TestBuilder from './components/TestBuilder';
 import Configuration from './components/Configuration';
-
-// 👇 usamos el QuestionBank “builder”
 import QuestionBank from './components/builder/QuestionBank';
 
-// Tipado mínimo para el constructor (ajústalo si ya lo tienes en ./types)
 export interface Alternativa {
   id: string;
   texto: string;
@@ -47,40 +39,116 @@ function App() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // 👉 Agregar desde el botón +
+  // Util para crear IDs de alternativas estables (no dependen del texto)
+  const uuid = () =>
+    (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2);
+
+  // Agregar desde el banco (botón +)
   const handleAddFromBank = (q: any) => {
-    // q viene del banco con forma { id, question?, text?, correctAnswer, incorrectAnswers[] }
     const texto = q.question ?? q.text ?? '';
     if (!texto) return;
-
     if (testQuestions.some((t) => t.id === q.id)) return;
 
     const alternativas: Alternativa[] = [
-      { id: q.correctAnswer, texto: q.correctAnswer, es_correcta: true },
-      ...(q.incorrectAnswers || []).map((t: string) => ({ id: t, texto: t, es_correcta: false })),
+      { id: uuid(), texto: q.correctAnswer, es_correcta: true },
+      ...(q.incorrectAnswers || []).map((t: string) => ({ id: uuid(), texto: t, es_correcta: false })),
     ].sort(() => Math.random() - 0.5);
 
     setTestQuestions((prev) => [...prev, { id: q.id, texto, alternativas }]);
   };
 
-  // 🚫 Eliminado el “drop desde banco”
+  // Reordenar preguntas dentro del constructor
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
+    if (active.id === over.id) return;
 
-    // Reordenar SOLO dentro del constructor
-    if (active.data.current?.from === 'builder' && over.id !== 'test-builder-area') {
-      const oldIndex = testQuestions.findIndex((q) => q.id === active.id);
-      const newIndex = testQuestions.findIndex((q) => q.id === over.id);
-      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-        setTestQuestions((prev) => arrayMove(prev, oldIndex, newIndex));
-      }
+    const oldIndex = testQuestions.findIndex((q) => q.id === active.id);
+    const newIndex = testQuestions.findIndex((q) => q.id === over.id);
+    if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+      setTestQuestions((prev) => arrayMove(prev, oldIndex, newIndex));
     }
   };
 
   const removeQuestion = (id: string) => {
     setTestQuestions((prev) => prev.filter((q) => q.id !== id));
   };
+
+  // ---- Callbacks de edición en FRONT ----
+  const updateQuestionText = (qId: string, newText: string) => {
+    setTestQuestions((prev) =>
+      prev.map((q) => (q.id === qId ? { ...q, texto: newText } : q))
+    );
+  };
+
+  const updateAlternativeText = (qId: string, altId: string, newText: string) => {
+    setTestQuestions((prev) =>
+      prev.map((q) =>
+        q.id === qId
+          ? {
+              ...q,
+              alternativas: q.alternativas.map((a) =>
+                a.id === altId ? { ...a, texto: newText } : a
+              ),
+            }
+          : q
+      )
+    );
+  };
+
+  const setCorrectAlternative = (qId: string, altId: string) => {
+    setTestQuestions((prev) =>
+      prev.map((q) =>
+        q.id === qId
+          ? {
+              ...q,
+              alternativas: q.alternativas.map((a) => ({
+                ...a,
+                es_correcta: a.id === altId,
+              })),
+            }
+          : q
+      )
+    );
+  };
+
+  const addAlternative = (qId: string) => {
+    setTestQuestions((prev) =>
+      prev.map((q) =>
+        q.id === qId
+          ? {
+              ...q,
+              alternativas: [
+                ...q.alternativas,
+                { id: uuid(), texto: 'Nueva alternativa', es_correcta: false },
+              ],
+            }
+          : q
+      )
+    );
+  };
+
+  const removeAlternative = (qId: string, altId: string) => {
+    setTestQuestions((prev) =>
+      prev.map((q) => {
+        if (q.id !== qId) return q;
+        const remaining = q.alternativas.filter((a) => a.id !== altId);
+        // Mantener al menos 2 alternativas
+        if (remaining.length < 2) return q;
+
+        // Si quitamos la correcta, marcamos la primera como correcta
+        const removedWasCorrect = q.alternativas.find((a) => a.id === altId)?.es_correcta;
+        const normalized = removedWasCorrect
+          ? remaining.map((a, i) => ({ ...a, es_correcta: i === 0 }))
+          : remaining;
+
+        return { ...q, alternativas: normalized };
+      })
+    );
+  };
+  // ---- fin edición ----
 
   const generatePdf = () => {
     const doc = new jsPDF();
@@ -159,14 +227,20 @@ function App() {
         </header>
 
         <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Banco de preguntas con botón + */}
           <QuestionBank
             onAddQuestion={handleAddFromBank}
             selectedQuestionIds={testQuestions.map((q) => q.id)}
           />
 
-          {/* Constructor (reordenar dentro con DnD) */}
-          <TestBuilder questions={testQuestions} onRemove={removeQuestion} />
+          <TestBuilder
+            questions={testQuestions}
+            onRemove={removeQuestion}
+            onUpdateQuestionText={updateQuestionText}
+            onUpdateAlternativeText={updateAlternativeText}
+            onSetCorrectAlternative={setCorrectAlternative}
+            onAddAlternative={addAlternative}
+            onRemoveAlternative={removeAlternative}
+          />
 
           <Configuration
             title={testTitle}
