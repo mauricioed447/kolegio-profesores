@@ -69,9 +69,8 @@ function App() {
     fetchFilters();
   }, []);
 
-  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (CORREGIDA) ---
+  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (ROBUSTA Y CORREGIDA) ---
   useEffect(() => {
-    // Solo busca si tenemos los TRES filtros seleccionados.
     if (!selectedNivel || !selectedMateria || !selectedUnidad) {
       setPreguntas([]);
       return;
@@ -80,7 +79,7 @@ function App() {
     const fetchQuestions = async () => {
       setLoading(prev => ({ ...prev, questions: true }));
       try {
-        // 1. Encontrar los quiz_sets que coincidan con NIVEL, MATERIA y UNIDAD.
+        // 1. Encontrar los quiz_sets que coincidan con los tres filtros.
         const { data: quizSets, error: setsError } = await supabase
           .from('quiz_sets')
           .select('id')
@@ -91,32 +90,48 @@ function App() {
         if (setsError) throw setsError;
         if (!quizSets || quizSets.length === 0) {
           setPreguntas([]);
-          return; // Termina la ejecución aquí si no hay quizzes para la combinación.
+          return;
         }
 
         const quizSetIds = quizSets.map(set => set.id);
 
-        // 2. Traer las preguntas de esos quiz_sets.
-        const { data: questionsData, error: questionsError } = await supabase
-          .from('quiz_questions')
-          .select('*')
-          .in('quiz_set_id', quizSetIds);
+        // 2. Crear un array de promesas, una por cada quiz_set_id.
+        // Esto evita el error de URL demasiado larga de la consulta .in().
+        const questionPromises = quizSetIds.map(id =>
+          supabase.from('quiz_questions').select('*').eq('quiz_set_id', id)
+        );
 
-        if (questionsError) throw questionsError;
+        // 3. Ejecutar todas las peticiones en paralelo.
+        const questionResults = await Promise.all(questionPromises);
 
-        // 3. Transformar y actualizar el estado.
-        const appQuestions = questionsData.map(transformDbQuestionToAppQuestion);
+        // 4. Procesar y unificar los resultados de todas las peticiones.
+        const allQuestionsData: QuizQuestionFromDB[] = [];
+        for (const result of questionResults) {
+          if (result.error) {
+            // Si una de las muchas peticiones falla, lo notificamos pero continuamos.
+            console.error("Error fetching questions for a specific quiz set:", result.error);
+            continue; 
+          }
+          if (result.data) {
+            allQuestionsData.push(...result.data);
+          }
+        }
+        
+        // 5. Transformar y actualizar el estado final.
+        const appQuestions = allQuestionsData.map(transformDbQuestionToAppQuestion);
         setPreguntas(appQuestions);
         
       } catch (error) {
-        console.error("Error fetching questions:", error);
+        // Captura errores generales (ej: fallo en la búsqueda de quiz_sets)
+        console.error("A general error occurred while fetching questions:", error);
+        setPreguntas([]); // Asegurarse de limpiar las preguntas si hay un error
       } finally {
         setLoading(prev => ({ ...prev, questions: false }));
       }
     };
 
     fetchQuestions();
-  }, [selectedNivel, selectedMateria, selectedUnidad]); // <-- Ahora depende de los tres filtros.
+  }, [selectedNivel, selectedMateria, selectedUnidad]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -135,12 +150,15 @@ function App() {
       return;
     }
 
-    if (active.data.current?.from === 'builder' && over.id !== 'test-builder-area') {
-      const oldIndex = testQuestions.findIndex(q => q.id === active.id);
-      const newIndex = testQuestions.findIndex(q => q.id === over.id);
-      if (oldIndex !== newIndex && oldIndex !== -1 && newIndex !== -1) {
-        setTestQuestions(prev => arrayMove(prev, oldIndex, newIndex));
-      }
+    if (active.data.current?.from === 'builder' && over.id !== active.id) {
+        const oldIndex = testQuestions.findIndex(q => q.id === active.id);
+        const newIndex = over.id === 'test-builder-area' 
+            ? testQuestions.length -1 
+            : testQuestions.findIndex(q => q.id === over.id);
+
+        if (oldIndex !== -1 && newIndex !== -1) {
+            setTestQuestions(prev => arrayMove(prev, oldIndex, newIndex));
+        }
     }
   };
   
