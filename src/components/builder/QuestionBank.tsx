@@ -20,6 +20,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
   const [materias, setMaterias] = useState<Materia[]>([]);
   const [unidades, setUnidades] = useState<Unidad[]>([]);
 
+  // CORRECCIÓN: Inicializar estados como string vacío para evitar warnings
   const [selectedNivel, setSelectedNivel] = useState<string>('');
   const [selectedMateria, setSelectedMateria] = useState<string>('');
   const [selectedUnidad, setSelectedUnidad] = useState<string>('');
@@ -35,17 +36,12 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
     const fetchFilters = async () => {
       try {
         setLoadingFilters(true);
-        const { data: nivelesData, error: nivelesError } = await supabase.from('niveles').select('*');
-        if (nivelesError) throw nivelesError;
-        setNiveles(nivelesData);
-
-        const { data: materiasData, error: materiasError } = await supabase.from('materias').select('*');
-        if (materiasError) throw materiasError;
-        setMaterias(materiasData);
-
-        const { data: unidadesData, error: unidadesError } = await supabase.from('unidades').select('*');
-        if (unidadesError) throw unidadesError;
-        setUnidades(unidadesData);
+        const { data: nivelesData } = await supabase.from('niveles').select('*');
+        setNiveles(nivelesData || []);
+        const { data: materiasData } = await supabase.from('materias').select('*');
+        setMaterias(materiasData || []);
+        const { data: unidadesData } = await supabase.from('unidades').select('*');
+        setUnidades(unidadesData || []);
       } catch (error) {
         console.error("Error fetching filters:", error);
       } finally {
@@ -60,7 +56,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
       const fetchQuizSets = async () => {
         setLoadingSets(true);
         setQuizSets([]);
-        setQuestionsByQuiz({}); // Limpiar preguntas anteriores al cambiar de filtro
+        setQuestionsByQuiz({});
         try {
           const { data, error } = await supabase.from('quiz_sets')
             .select('id, title')
@@ -69,7 +65,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
             .eq('unidad_id', selectedUnidad);
           
           if (error) throw error;
-          setQuizSets(data);
+          setQuizSets(data || []);
         } catch (error) {
           console.error("Error fetching quiz sets:", error);
         } finally {
@@ -84,15 +80,15 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
     if (!quizId || questionsByQuiz[quizId]) return;
     setLoadingQuestions(quizId);
     try {
-      // --- INICIO DE LA CORRECCIÓN 1: 'quiz_set_id' en lugar de 'quiz_id' ---
+      // --- CORRECCIÓN 1: Usar 'quiz_set_id' y mapear 'text' a 'question' ---
       const { data, error } = await supabase.from('quiz_questions').select('*').eq('quiz_set_id', quizId);
       if (error) throw error;
       
       const formattedQuestions = data.map(q => ({
         id: q.id,
-        question: q.text, // La columna se llama 'text' en tu DB, no 'question'
+        question: q.text, // Mapeo de la columna 'text' de tu DB a 'question' para la app
         correctAnswer: q.correct_answer,
-        incorrectAnswers: q.incorrect_answers || [], // Aseguramos que sea un array
+        incorrectAnswers: q.incorrect_answers || [],
         tags: q.tags,
       }));
 
@@ -134,19 +130,20 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
             <Accordion type="single" collapsible className="w-full" onValueChange={handleFetchQuestions}>
               {quizSets.map(set => set && set.id && (
                 <AccordionItem value={set.id} key={set.id}>
-                  <AccordionTrigger className="text-sm font-medium">{set.title}</AccordionTrigger>
+                  <AccordionTrigger className="text-sm font-medium text-left">{set.title}</AccordionTrigger>
                   <AccordionContent>
                     {loadingQuestions === set.id && <div className="text-center p-2"><Loader2 className="h-4 w-4 animate-spin inline-block" /></div>}
                     
-                    {/* --- INICIO DE LA CORRECCIÓN 2: Mostrar alternativas --- */}
+                    {/* --- CORRECCIÓN 2: Código JSX para mostrar las alternativas --- */}
+                    <div className="space-y-2">
                     {questionsByQuiz[set.id]?.map((q) => {
                       const isSelected = selectedQuestionIds.includes(q.id);
                       return (
                         <div key={q.id} className="flex items-start justify-between p-2 hover:bg-accent rounded-md">
                           <div className="flex-1 pr-2">
-                            <p className="text-sm">{q.question}</p>
-                            <div className="pl-2 mt-1 text-xs border-l-2">
-                                <p className="text-green-600 font-semibold">{q.correctAnswer}</p>
+                            <p className="text-sm font-medium">{q.question}</p>
+                            <div className="pl-2 mt-1 text-xs border-l-2 ml-1">
+                                <p className="text-green-700 font-semibold">{q.correctAnswer}</p>
                                 {q.incorrectAnswers.map((ans, idx) => (
                                     <p key={idx} className="text-muted-foreground">{ans}</p>
                                 ))}
@@ -155,16 +152,16 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-7 w-7 flex-shrink-0 mt-1"
+                            className="h-7 w-7 flex-shrink-0"
                             onClick={() => onAddQuestion({ ...q, dndId: crypto.randomUUID() })}
                             disabled={isSelected}
-                            aria-label={isSelected ? 'Pregunta añadida' : 'Añadir pregunta'}
                           >
                             {isSelected ? <Check className="h-4 w-4 text-green-500" /> : <Plus className="h-4 w-4" />}
                           </Button>
                         </div>
                       );
                     })}
+                    </div>
                   </AccordionContent>
                 </AccordionItem>
               ))}
