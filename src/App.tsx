@@ -39,13 +39,13 @@ function App() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // Util para crear IDs de alternativas estables (no dependen del texto)
+  // Generador simple de IDs
   const uuid = () =>
     (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2);
 
-  // Agregar desde el banco (botón +)
+  // Agregar desde el banco con botón +
   const handleAddFromBank = (q: any) => {
     const texto = q.question ?? q.text ?? '';
     if (!texto) return;
@@ -57,6 +57,21 @@ function App() {
     ].sort(() => Math.random() - 0.5);
 
     setTestQuestions((prev) => [...prev, { id: q.id, texto, alternativas }]);
+  };
+
+  // NUEVO: agregar pregunta completamente manual
+  const addManualQuestion = () => {
+    const qId = `manual-${uuid()}`;
+    const alternativas: Alternativa[] = [
+      { id: uuid(), texto: 'Opción A', es_correcta: true },
+      { id: uuid(), texto: 'Opción B', es_correcta: false },
+      { id: uuid(), texto: 'Opción C', es_correcta: false },
+      { id: uuid(), texto: 'Opción D', es_correcta: false },
+    ];
+    setTestQuestions((prev) => [
+      ...prev,
+      { id: qId, texto: 'Nueva pregunta', alternativas },
+    ]);
   };
 
   // Reordenar preguntas dentro del constructor
@@ -135,15 +150,11 @@ function App() {
       prev.map((q) => {
         if (q.id !== qId) return q;
         const remaining = q.alternativas.filter((a) => a.id !== altId);
-        // Mantener al menos 2 alternativas
-        if (remaining.length < 2) return q;
-
-        // Si quitamos la correcta, marcamos la primera como correcta
+        if (remaining.length < 2) return q; // mantener al menos 2
         const removedWasCorrect = q.alternativas.find((a) => a.id === altId)?.es_correcta;
         const normalized = removedWasCorrect
           ? remaining.map((a, i) => ({ ...a, es_correcta: i === 0 }))
           : remaining;
-
         return { ...q, alternativas: normalized };
       })
     );
@@ -240,6 +251,7 @@ function App() {
             onSetCorrectAlternative={setCorrectAlternative}
             onAddAlternative={addAlternative}
             onRemoveAlternative={removeAlternative}
+            onAddManualQuestion={addManualQuestion}   // 👈 nuevo
           />
 
           <Configuration
