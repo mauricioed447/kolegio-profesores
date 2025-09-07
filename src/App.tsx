@@ -3,7 +3,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import jsPDF from 'jspdf';
 import { supabase } from './integrations/supabase/client';
-import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB } from './types';
+import { Nivel, Materia, Unidad, PreguntaApp, QuizQuestionFromDB, AlternativaApp } from './types';
 import QuestionBank from './components/QuestionBank';
 import TestBuilder from './components/TestBuilder';
 import Configuration from './components/Configuration';
@@ -69,31 +69,34 @@ function App() {
     fetchFilters();
   }, []);
 
-  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (CORREGIDA Y SIMPLIFICADA) ---
+  // --- LÓGICA DE BÚSQUEDA DE PREGUNTAS (CORREGIDA) ---
   useEffect(() => {
-    // Solo busca si tenemos una Unidad seleccionada
-    if (!selectedUnidad) {
+    // Solo busca si tenemos los TRES filtros seleccionados.
+    if (!selectedNivel || !selectedMateria || !selectedUnidad) {
       setPreguntas([]);
       return;
     }
+    
     const fetchQuestions = async () => {
       setLoading(prev => ({ ...prev, questions: true }));
       try {
-        // 1. Encontrar los quiz_sets que coincidan SOLO con la UNIDAD
+        // 1. Encontrar los quiz_sets que coincidan con NIVEL, MATERIA y UNIDAD.
         const { data: quizSets, error: setsError } = await supabase
           .from('quiz_sets')
           .select('id')
-          .eq('unidad_id', selectedUnidad); // <-- Filtro simplificado
+          .eq('nivel_id', selectedNivel)
+          .eq('materia_id', selectedMateria)
+          .eq('unidad_id', selectedUnidad);
 
         if (setsError) throw setsError;
         if (!quizSets || quizSets.length === 0) {
           setPreguntas([]);
-          return;
+          return; // Termina la ejecución aquí si no hay quizzes para la combinación.
         }
 
         const quizSetIds = quizSets.map(set => set.id);
 
-        // 2. Traer las preguntas de esos quiz_sets
+        // 2. Traer las preguntas de esos quiz_sets.
         const { data: questionsData, error: questionsError } = await supabase
           .from('quiz_questions')
           .select('*')
@@ -101,6 +104,7 @@ function App() {
 
         if (questionsError) throw questionsError;
 
+        // 3. Transformar y actualizar el estado.
         const appQuestions = questionsData.map(transformDbQuestionToAppQuestion);
         setPreguntas(appQuestions);
         
@@ -110,8 +114,9 @@ function App() {
         setLoading(prev => ({ ...prev, questions: false }));
       }
     };
+
     fetchQuestions();
-  }, [selectedUnidad]); // <-- Ahora solo depende de la unidad
+  }, [selectedNivel, selectedMateria, selectedUnidad]); // <-- Ahora depende de los tres filtros.
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -133,7 +138,7 @@ function App() {
     if (active.data.current?.from === 'builder' && over.id !== 'test-builder-area') {
       const oldIndex = testQuestions.findIndex(q => q.id === active.id);
       const newIndex = testQuestions.findIndex(q => q.id === over.id);
-      if (oldIndex !== newIndex) {
+      if (oldIndex !== newIndex && oldIndex !== -1 && newIndex !== -1) {
         setTestQuestions(prev => arrayMove(prev, oldIndex, newIndex));
       }
     }
