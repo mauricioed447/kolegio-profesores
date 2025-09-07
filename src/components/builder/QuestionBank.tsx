@@ -1,17 +1,27 @@
-// RUTA: src/components/builder/QuestionBank.tsx
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/utils/supabase';
-import { Nivel, Materia, Unidad, QuizSet, Question, SelectedQuestion } from '@/types';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from '@/components/ui/button';
 import { Plus, Check, Loader2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
+type Nivel = { id: string; nombre: string };
+type Materia = { id: string; nombre: string; nivel_id: string };
+type Unidad = { id: string; nombre: string };
+
+type Question = {
+  id: string;
+  question: string;
+  correctAnswer: string;
+  incorrectAnswers: string[];
+  tags?: string[] | null;
+};
+
 interface QuestionBankProps {
-  onAddQuestion: (question: SelectedQuestion) => void;
+  onAddQuestion: (q: Question) => void;
   selectedQuestionIds: string[];
 }
 
@@ -20,12 +30,11 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
   const [materias, setMaterias] = useState<Materia[]>([]);
   const [unidades, setUnidades] = useState<Unidad[]>([]);
 
-  // Estados controlados como string vacío para evitar warnings
   const [selectedNivel, setSelectedNivel] = useState<string>('');
   const [selectedMateria, setSelectedMateria] = useState<string>('');
   const [selectedUnidad, setSelectedUnidad] = useState<string>('');
 
-  const [quizSets, setQuizSets] = useState<Partial<QuizSet>[]>([]);
+  const [quizSets, setQuizSets] = useState<Array<{ id: string; title?: string | null }>>([]);
   const [questionsByQuiz, setQuestionsByQuiz] = useState<Record<string, Question[]>>({});
 
   const [loadingFilters, setLoadingFilters] = useState(true);
@@ -74,6 +83,9 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
         }
       };
       fetchQuizSets();
+    } else {
+      setQuizSets([]);
+      setQuestionsByQuiz({});
     }
   }, [selectedNivel, selectedMateria, selectedUnidad]);
 
@@ -81,7 +93,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
     if (!quizId || questionsByQuiz[quizId]) return;
     setLoadingQuestions(quizId);
     try {
-      // CORRECCIÓN: usar la FK correcta `quiz_id` y mapear el campo del enunciado con fallback
+      // ✅ usar quiz_id y fallback text/question
       const { data, error } = await supabase
         .from('quiz_questions')
         .select('*')
@@ -89,15 +101,15 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
 
       if (error) throw error;
 
-      const formattedQuestions: Question[] = (data || []).map((q: any) => ({
+      const formatted: Question[] = (data || []).map((q: any) => ({
         id: q.id,
-        question: q.question ?? q.text ?? '', // fallback por si la columna se llama `text`
+        question: q.question ?? q.text ?? '',
         correctAnswer: q.correct_answer,
         incorrectAnswers: q.incorrect_answers || [],
-        tags: q.tags,
+        tags: q.tags ?? null,
       }));
 
-      setQuestionsByQuiz((prev) => ({ ...prev, [quizId]: formattedQuestions }));
+      setQuestionsByQuiz((prev) => ({ ...prev, [quizId]: formatted }));
     } catch (error) {
       console.error(`Error fetching questions for quiz ${quizId}:`, error);
     } finally {
@@ -105,13 +117,15 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
     }
   };
 
-  const filteredMaterias = materias.filter((m) => m.nivel_id === selectedNivel);
+  const filteredMaterias = selectedNivel
+    ? materias.filter((m) => m.nivel_id === selectedNivel)
+    : [];
 
   return (
-    <Card className="h-full flex flex-col">
+    <Card className="h-full flex flex-col lg:col-span-4">
       <CardHeader>
         <CardTitle>Banco de Preguntas</CardTitle>
-        <CardDescription>Filtra y selecciona preguntas de los quizzes existentes.</CardDescription>
+        <CardDescription>Selecciona con el botón “+”. Arrastrar está deshabilitado.</CardDescription>
       </CardHeader>
       <CardContent className="flex-1 flex flex-col overflow-hidden">
         <div className="space-y-3 p-1">
@@ -169,6 +183,7 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
           )}
 
           {quizSets.length > 0 && (
+            // onValueChange dispara la carga de preguntas sin arrastre
             <Accordion type="single" collapsible className="w-full" onValueChange={handleFetchQuestions}>
               {quizSets.map((set) => set && set.id && (
                 <AccordionItem value={set.id!} key={set.id}>
@@ -184,8 +199,13 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
                       {questionsByQuiz[set.id!]?.map((q) => {
                         const isSelected = selectedQuestionIds.includes(q.id);
                         return (
-                          <div key={q.id} className="flex items-start justify-between p-2 hover:bg-accent rounded-md">
-                            <div className="flex-1 pr-2">
+                          <div
+                            key={q.id}
+                            className="flex items-start justify-between p-2 rounded-md hover:bg-accent cursor-default" // 👈 sin “grab”
+                            draggable={false}
+                            onPointerDown={(e) => e.stopPropagation()} // 👈 evita que DnD intercepte
+                          >
+                            <div className="flex-1 pr-2 select-text">
                               <p className="text-sm font-medium">{q.question}</p>
                               <div className="pl-2 mt-1 text-xs border-l-2 ml-1">
                                 <p className="text-green-700 font-semibold">{q.correctAnswer}</p>
@@ -197,9 +217,12 @@ const QuestionBank: React.FC<QuestionBankProps> = ({ onAddQuestion, selectedQues
                             <Button
                               size="icon"
                               variant="ghost"
-                              className="h-7 w-7 flex-shrink-0"
-                              onClick={() => onAddQuestion({ ...q, dndId: crypto.randomUUID() })}
+                              className="h-7 w-7 flex-shrink-0 cursor-pointer"
+                              title={isSelected ? "Ya agregada" : "Agregar a la prueba"}
+                              onPointerDown={(e) => e.stopPropagation()} // 👈 asegura click limpio
+                              onClick={() => !isSelected && onAddQuestion(q)}
                               disabled={isSelected}
+                              aria-disabled={isSelected}
                             >
                               {isSelected ? <Check className="h-4 w-4 text-green-500" /> : <Plus className="h-4 w-4" />}
                             </Button>
