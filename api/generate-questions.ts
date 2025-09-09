@@ -31,27 +31,6 @@ type GeneratedQuestionWire = {
   tags?: string[];
 };
 
-const schema = {
-  type: 'array',
-  items: {
-    type: 'object',
-    properties: {
-      texto: { type: 'string' },
-      correct_answer: { type: 'string' },
-      incorrect_answers: {
-        type: 'array',
-        items: { type: 'string' },
-        minItems: 3,
-        maxItems: 3
-      },
-      tags: { type: 'array', items: { type: 'string' } }
-    },
-    required: ['texto', 'correct_answer', 'incorrect_answers']
-  },
-  minItems: 1,
-  maxItems: 5
-};
-
 function buildPromptBase(topic: string, count: number, difficulty: string) {
   const about = topic ? ` sobre "${topic}"` : '';
   return `Genera ${count} preguntas de opción múltiple en español neutro${about}. Dificultad: ${difficulty}.
@@ -144,10 +123,11 @@ async function getAccessToken(): Promise<string> {
 }
 
 /** Lee texto y JSON embebido (inlineData base64) de la respuesta de Vertex. */
-function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: string[] } {
-  const parts = data?.candidates?.[0]?.content?.parts;
+function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: string[]; block?: string } {
   const kinds: string[] = [];
-  if (!Array.isArray(parts)) return { text: '', jsonArrays: [], kinds };
+  const parts = data?.candidates?.[0]?.content?.parts;
+  const block = data?.promptFeedback?.blockReason; // e.g., "SAFETY"
+  if (!Array.isArray(parts)) return { text: '', jsonArrays: [], kinds, block };
 
   const texts: string[] = [];
   const jsonArrays: any[][] = [];
@@ -166,7 +146,7 @@ function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: st
       } catch { /* ignore */ }
     }
   }
-  return { text: texts.join('\n'), jsonArrays, kinds };
+  return { text: texts.join('\n'), jsonArrays, kinds, block };
 }
 
 function tryParseArray(text: string): any[] {
@@ -210,13 +190,16 @@ function normalizeItems(raw: any[]): { texto: string; correct_answer: string; in
 async function callModel(accessToken: string, model: string, prompt: string, temperature: number) {
   const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${model}:generateContent`;
   const body = {
+    // Añadimos una instrucción de sistema para reforzar formato/estilo
+    systemInstruction: {
+      role: 'system',
+      parts: [{ text: 'Eres un generador de ítems educativos. Devuelve solo JSON válido. No incluyas texto adicional.' }]
+    },
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    // Configuración ligera (sin response_schema/mime) para evitar respuestas vacías en algunos despliegues
     generationConfig: {
       temperature,
-      // En Vertex estos nombres en snake_case son aceptados y evitan ambigüedad.
-      max_output_tokens: 1024,
-      response_mime_type: 'application/json',
-      response_schema: schema
+      maxOutputTokens: 1024
     }
   };
   return fetch(url, {
@@ -268,13 +251,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const text = await r.text().catch(() => '');
       if (r.ok) {
         let data: any; try { data = JSON.parse(text); } catch { data = {}; }
-        const { text: partsText, jsonArrays, kinds } = extractParts(data);
+        const { text: partsText, jsonArrays, kinds, block } = extractParts(data);
 
-        // Preferimos JSON embebido; si no hay, parseamos texto.
         const arr = jsonArrays.length ? jsonArrays[0] : tryParseArray(partsText);
         const normalized = normalizeItems(arr);
 
-        console.log(`[generate-questions] model=${model} items=${normalized.length} parts=${kinds.join('+') || 'none'} seeds=${seeds.length} inferred="${inferred || ''}"`);
+        console.log(`[generate-questions] model=${model} items=${normalized.length} parts=${kinds.join('+') || 'none'} seeds=${seeds.length} inferred="${inferred || ''}" block=${block || 'none'}`);
+
         return res.status(200).json(normalized);
       }
       lastStatus = status;
