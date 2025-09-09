@@ -34,12 +34,11 @@ type GeneratedQuestionWire = {
 function buildPromptBase(topic: string, count: number, difficulty: string) {
   const about = topic ? ` sobre "${topic}"` : '';
   return `Genera ${count} preguntas de opción múltiple en español neutro${about}. Dificultad: ${difficulty}.
-Requisitos estrictos de formato:
-- RESPONDE SOLO JSON (array) sin texto adicional ni explicaciones.
+Requisitos de formato (muy importante):
+- Devuelve SOLO un arreglo JSON. NADA de texto adicional.
 - Cada objeto: { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] }.
-- 1 sola correcta; 3 incorrectas plausibles.
-- Enunciado claro (12–30 palabras), sin ambigüedades ni doble negación.
-- Nada de bloques de código, cabeceras o comentarios.`.trim();
+- 1 correcta; 3 incorrectas plausibles.
+- Enunciado claro (12–30 palabras), sin ambigüedades ni doble negación.`.trim();
 }
 
 function addSeedGuideToPrompt(
@@ -48,8 +47,8 @@ function addSeedGuideToPrompt(
   inferredTopic: string | null
 ) {
   const guideHeader = inferredTopic
-    ? `\n\nTema inferido desde la guía: ${inferredTopic}.\nAlinea estilo/registro/terminología con los ejemplos (no los repitas literalmente):\n`
-    : `\n\nUsa la guía siguiente para alinear estilo/registro/terminología (no repitas literalmente):\n`;
+    ? `\n\nTema inferido desde la guía: ${inferredTopic}.\nAlinea estilo/registro/terminología con los ejemplos (NO los repitas literalmente):\n`
+    : `\n\nUsa la guía para alinear estilo/registro/terminología (NO repitas literalmente):\n`;
 
   const examples = seeds.slice(0, 3).map((s, i) =>
     `Ejemplo ${i + 1}:\n- Enunciado: ${s.texto}\n- Alternativas: ${s.alternativas.join(' | ')}\n- Correcta: ${s.correcta}`
@@ -149,23 +148,93 @@ function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: st
   return { text: texts.join('\n'), jsonArrays, kinds, block };
 }
 
+/** Parser "duro": intenta recuperar un array desde texto con variadas convenciones. */
 function tryParseArray(text: string): any[] {
   if (!text) return [];
+  // 1) JSON directo
   try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch {}
+  // 2) ```json ... ```
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) { try { const v = JSON.parse(fence[1].trim()); return Array.isArray(v) ? v : []; } catch {} }
+  // 3) [ ... ] heurístico
   const first = text.indexOf('[');
   const last = text.lastIndexOf(']');
   if (first !== -1 && last !== -1 && last > first) {
     const slice = text.slice(first, last + 1);
     try { const v = JSON.parse(slice); return Array.isArray(v) ? v : []; } catch {}
   }
+  // 4) objeto con .questions
   try {
     const obj = JSON.parse(text);
     const arr = (obj && Array.isArray(obj.questions)) ? obj.questions : [];
-    return arr;
+    if (arr.length) return arr;
   } catch {}
-  return [];
+
+  // 5) Heurística por bloques con "Pregunta/Enunciado", "Opciones/Alternativas", "Correcta"
+  const blocks = text
+    .split(/\n\s*\n+/) // separa por doble salto
+    .map(b => b.trim())
+    .filter(b => /pregunta|enunciado/i.test(b) && /(correcta|respuesta correcta)/i.test(b));
+
+  const results: any[] = [];
+  for (const b of blocks) {
+    // enunciado
+    let enunciado = '';
+    const enMatch = b.match(/(?:pregunta|enunciado)\s*:\s*([\s\S]*?)(?:\n|$)/i);
+    enunciado = (enMatch?.[1] || '').replace(/^\d+[\.\)]\s*/, '').trim();
+
+    // opciones / alternativas
+    let opciones: string[] = [];
+    const sec = b.split(/(?:opciones|alternativas)\s*:\s*/i)[1] || '';
+    if (sec) {
+      const lines = sec.split('\n');
+      for (let line of lines) {
+        line = line.trim();
+        const m = line.match(/^(?:[-*•]\s*|[a-d]\)\s*|[a-d]\.\s*)(.+)$/i);
+        if (m) opciones.push(m[1].trim().replace(/\s*\(correcta\)\s*$/i, ''));
+      }
+      if (!opciones.length) {
+        // también admitir separadas por ; o |
+        opciones = sec.split(/[;|]/).map(s => s.trim()).filter(Boolean);
+      }
+    }
+    // correcta
+    let correcta = '';
+    const c1 = b.match(/(?:respuesta\s*correcta|correcta)\s*:\s*([^\n]+)/i);
+    if (c1?.[1]) correcta = c1[1].trim();
+    if (!correcta && opciones.length) {
+      // si marcó "(correcta)" en alguna opción
+      const cMark = b.match(/^(?:[-*•]\s*|[a-d]\)\s*|[a-d]\.\s*)(.+?)\s*\(correcta\)/im);
+      if (cMark?.[1]) correcta = cMark[1].trim();
+    }
+
+    // incorrectas
+    let incorrectas: string[] = [];
+    const incSec = b.split(/(?:incorrectas|distractores)\s*:\s*/i)[1] || '';
+    if (incSec) {
+      incorrectas = incSec.split(/[;|]/).map(s => s.trim()).filter(Boolean);
+      if (!incorrectas.length) {
+        const lines = incSec.split('\n').map(l => l.trim());
+        for (const line of lines) {
+          const m = line.match(/^(?:[-*•]\s*|[a-d]\)\s*|[a-d]\.\s*)(.+)$/i);
+          if (m) incorrectas.push(m[1].trim());
+        }
+      }
+    }
+    if (!incorrectas.length && opciones.length && correcta) {
+      incorrectas = opciones.filter(o => o.toLowerCase() !== correcta.toLowerCase());
+    }
+
+    if (enunciado && correcta && incorrectas.length >= 3) {
+      results.push({
+        texto: enunciado,
+        correct_answer: correcta,
+        incorrect_answers: incorrectas.slice(0, 3)
+      });
+    }
+  }
+
+  return results;
 }
 
 function normalizeItems(raw: any[]): { texto: string; correct_answer: string; incorrect_answers: string[]; tags?: string[] }[] {
@@ -190,16 +259,15 @@ function normalizeItems(raw: any[]): { texto: string; correct_answer: string; in
 async function callModel(accessToken: string, model: string, prompt: string, temperature: number) {
   const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${model}:generateContent`;
   const body = {
-    // Añadimos una instrucción de sistema para reforzar formato/estilo
     systemInstruction: {
       role: 'system',
-      parts: [{ text: 'Eres un generador de ítems educativos. Devuelve solo JSON válido. No incluyas texto adicional.' }]
+      parts: [{ text: 'Eres un generador de ítems educativos. Devuelve solo JSON válido (array). No incluyas texto fuera del JSON.' }]
     },
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    // Configuración ligera (sin response_schema/mime) para evitar respuestas vacías en algunos despliegues
     generationConfig: {
       temperature,
       maxOutputTokens: 1024
+      // evitamos response_schema/mime para no forzar silencio en algunos despliegues
     }
   };
   return fetch(url, {
@@ -253,10 +321,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let data: any; try { data = JSON.parse(text); } catch { data = {}; }
         const { text: partsText, jsonArrays, kinds, block } = extractParts(data);
 
-        const arr = jsonArrays.length ? jsonArrays[0] : tryParseArray(partsText);
+        // Preferimos JSON embebido; si no hay, parseamos texto y, si falla, heurística por bloques.
+        let arr: any[] = jsonArrays.length ? jsonArrays[0] : [];
+        if (!arr.length) {
+          arr = tryParseArray(partsText);
+        }
+
         const normalized = normalizeItems(arr);
 
-        console.log(`[generate-questions] model=${model} items=${normalized.length} parts=${kinds.join('+') || 'none'} seeds=${seeds.length} inferred="${inferred || ''}" block=${block || 'none'}`);
+        console.log(`[generate-questions] model=${model} items=${normalized.length} parts=${kinds.join('+') || 'none'} text_len=${(partsText||'').length} seeds=${seeds.length} inferred="${inferred || ''}" block=${block || 'none'}`);
 
         return res.status(200).json(normalized);
       }
