@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createSign } from 'crypto';
 
-// Modelos vigentes (API/SDK): 2.5 y 2.0. 1.5 está obsoleto.
+// Modelos vigentes (Vertex). Fallback en orden.
 const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'];
 
 const PROJECT = process.env.GOOGLE_CLOUD_PROJECT || '';
@@ -17,9 +17,16 @@ type GenerateQuestionsRequest = {
 };
 
 type GeneratedQuestion = {
-  texto: string;
-  correct_answer: string;
-  incorrect_answers: string[];
+  texto?: string;
+  correct_answer?: string;
+  incorrect_answers?: string[];
+  // sinónimos que podríamos recibir
+  enunciado?: string;
+  correcta?: string;
+  respuesta_correcta?: string;
+  opciones?: string[];
+  incorrectas?: string[];
+  distractores?: string[];
   tags?: string[];
 };
 
@@ -46,8 +53,8 @@ const schema = {
 
 function buildPrompt(p: GenerateQuestionsRequest) {
   const count = Math.min(Math.max(p.count ?? 3, 1), 5);
-  const difficulty = p.difficulty === 'avanzada' ? 'avanzada' :
-                     p.difficulty === 'media' ? 'media' : 'básica';
+  const difficulty = p.difficulty === 'avanzada' ? 'avanzada'
+                    : p.difficulty === 'media' ? 'media' : 'básica';
 
   const seedTxt = (p.useSeed && p.seed?.length)
     ? `\n\nGuía (ejemplos):\n${p.seed.slice(0, 5).map((s, i) =>
@@ -55,12 +62,13 @@ function buildPrompt(p: GenerateQuestionsRequest) {
       ).join('\n')}\n`
     : '';
 
-  return `Crea ${count} preguntas de opción múltiple en español neutro sobre el tema "${p.topic}". Dificultad: ${difficulty}.
-Requisitos:
-- Devuelve SOLO JSON (array) con objetos { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] }.
+  return `Genera ${count} preguntas de opción múltiple en español neutro sobre "${p.topic}". Dificultad: ${difficulty}.
+Requisitos estrictos de formato:
+- RESPONDE SOLO JSON (array) sin texto adicional ni explicaciones.
+- Cada objeto: { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] }.
 - 1 sola correcta; 3 incorrectas plausibles.
-- Enunciado claro (12–30 palabras); sin ambigüedades ni doble negación.
-- Evita marcas comerciales y contenidos sensibles.
+- Enunciado claro (12–30 palabras), sin ambigüedades ni doble negación.
+- Nada de bloques de código, cabeceras o comentarios.
 ${seedTxt}`.trim();
 }
 
@@ -72,11 +80,9 @@ function b64url(input: string | Buffer) {
 async function getAccessToken(): Promise<string> {
   if (!SA_JSON) throw new Error('Falta GOOGLE_SERVICE_ACCOUNT_JSON');
   let creds: { client_email: string; private_key: string };
-  try {
-    creds = JSON.parse(SA_JSON);
-  } catch {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON no es JSON válido');
-  }
+  try { creds = JSON.parse(SA_JSON); }
+  catch { throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON no es JSON válido'); }
+
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'RS256', typ: 'JWT' };
   const claims = {
@@ -88,8 +94,7 @@ async function getAccessToken(): Promise<string> {
   };
   const unsigned = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
   const signer = createSign('RSA-SHA256');
-  signer.update(unsigned);
-  signer.end();
+  signer.update(unsigned); signer.end();
   const signature = b64url(signer.sign(creds.private_key));
   const assertion = `${unsigned}.${signature}`;
 
@@ -103,21 +108,68 @@ async function getAccessToken(): Promise<string> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   });
+
   if (!resp.ok) throw new Error(`Fallo access_token: ${resp.status} ${await resp.text()}`);
   const data = await resp.json() as { access_token: string };
   if (!data.access_token) throw new Error('Respuesta sin access_token');
   return data.access_token;
 }
 
-function parseVertexResponse(json: any): GeneratedQuestion[] {
-  const txt = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!txt || typeof txt !== 'string') return [];
-  try {
-    const arr = JSON.parse(txt);
-    return Array.isArray(arr) ? arr as GeneratedQuestion[] : [];
-  } catch {
-    return [];
+function extractAllTextParts(json: any): string {
+  const parts = json?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .map((p: any) => typeof p?.text === 'string' ? p.text : '')
+    .filter(Boolean)
+    .join('\n');
+}
+
+function tryParseArray(text: string): any[] {
+  if (!text) return [];
+  // 1) directo
+  try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch {}
+  // 2) dentro de ```json ... ```
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) {
+    try { const v = JSON.parse(fence[1].trim()); return Array.isArray(v) ? v : []; } catch {}
   }
+  // 3) heurística: primer '[' a último ']'
+  const first = text.indexOf('[');
+  const last = text.lastIndexOf(']');
+  if (first !== -1 && last !== -1 && last > first) {
+    const slice = text.slice(first, last + 1);
+    try { const v = JSON.parse(slice); return Array.isArray(v) ? v : []; } catch {}
+  }
+  // 4) objeto con clave questions
+  try {
+    const obj = JSON.parse(text);
+    const arr = (obj && Array.isArray(obj.questions)) ? obj.questions : [];
+    return arr;
+  } catch {}
+  return [];
+}
+
+function normalizeItems(raw: any[]): GeneratedQuestion[] {
+  return raw.map((q) => {
+    // tolerar distintos nombres
+    const texto = (q.texto ?? q.enunciado ?? '').toString().trim();
+    const correct =
+      (q.correct_answer ?? q.correcta ?? q['respuesta_correcta'] ?? '').toString().trim();
+
+    // incorrectas vs distractores u opciones (quitando la correcta)
+    let incorrects: string[] = Array.isArray(q.incorrect_answers) ? q.incorrect_answers
+                          : Array.isArray(q.incorrectas) ? q.incorrectas
+                          : Array.isArray(q.distractores) ? q.distractores
+                          : Array.isArray(q.opciones) ? q.opciones.filter((o: any) => o !== correct)
+                          : [];
+    incorrects = incorrects.map((s: any) => String(s)).filter(Boolean);
+
+    // asegurar 3
+    if (correct && incorrects.length > 3) incorrects = incorrects.slice(0, 3);
+
+    return { texto, correct_answer: correct, incorrect_answers: incorrects, tags: Array.isArray(q.tags) ? q.tags : [] };
+  })
+  .filter(q => q.texto && q.correct_answer && Array.isArray(q.incorrect_answers) && q.incorrect_answers.length === 3);
 }
 
 async function callModel(accessToken: string, model: string, prompt: string) {
@@ -146,11 +198,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!PROJECT || !LOCATION) return res.status(500).json({ error: 'Faltan GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION' });
 
   let payload: GenerateQuestionsRequest;
-  try {
-    payload = typeof req.body === 'object' ? req.body : JSON.parse(req.body as any);
-  } catch {
-    return res.status(400).json({ error: 'JSON inválido' });
-  }
+  try { payload = typeof req.body === 'object' ? req.body : JSON.parse(req.body as any); }
+  catch { return res.status(400).json({ error: 'JSON inválido' }); }
 
   try {
     const accessToken = await getAccessToken();
@@ -161,24 +210,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     for (const model of MODEL_CANDIDATES) {
       const r = await callModel(accessToken, model, prompt);
+      const status = r.status;
+      const text = await r.text().catch(() => '');
       if (r.ok) {
-        const data = await r.json();
-        const items = parseVertexResponse(data);
-        const normalized = (items || []).map((q) => ({
-          texto: String(q.texto || '').trim(),
-          correct_answer: String(q.correct_answer || '').trim(),
-          incorrect_answers: Array.isArray(q.incorrect_answers) ? q.incorrect_answers.slice(0, 3).map(String) : [],
-          tags: Array.isArray(q.tags) ? q.tags.map(String) : []
-        })).filter(q => q.texto && q.correct_answer && q.incorrect_answers.length === 3);
+        // r.json() no se puede leer después de text(), por eso parseamos desde text.
+        let data: any; try { data = JSON.parse(text); } catch { data = {}; }
+        const rawText = extractAllTextParts(data);
+        const arr = tryParseArray(rawText);
+        const normalized = normalizeItems(arr);
+
+        console.log(`[generate-questions] model=${model} items=${normalized.length}`); // visible en Vercel Logs
 
         return res.status(200).json(normalized);
       }
-      lastStatus = r.status;
-      lastText = await r.text().catch(() => '');
+      lastStatus = status;
+      lastText = text;
     }
 
-    res.status(lastStatus || 502).json({ error: 'Vertex AI error', details: lastText.slice(0, 2000) });
+    return res.status(lastStatus || 502).json({ error: 'Vertex AI error', details: lastText.slice(0, 2000) });
   } catch (e: any) {
-    res.status(500).json({ error: 'Fallo en generación', details: e?.message || String(e) });
+    return res.status(500).json({ error: 'Fallo en generación', details: e?.message || String(e) });
   }
 }
