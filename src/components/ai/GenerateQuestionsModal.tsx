@@ -4,31 +4,47 @@ import { Input } from '@/components/ui/input';
 import type { AppQuestion, GeneratedQuestion, GenerateQuestionsRequest } from '@/types/ai';
 import { mapGeneratedToApp } from '@/lib/ai/mapVertexToApp';
 
-type SeedQuestion = { texto: string; alternativas: string[]; correcta: string };
+type SeedQuestion = {
+  texto: string;
+  alternativas: string[];
+  correcta: string;
+};
 
 type Props = {
   open: boolean;
   onClose: () => void;
   onAddQuestionsBulk: (qs: AppQuestion[]) => void;
-  seedQuestions: Array<{ texto: string; alternativas: Array<{ texto: string; es_correcta: boolean }> }>;
+  seedQuestions: Array<{
+    texto: string;
+    alternativas: Array<{ texto: string; es_correcta: boolean }>;
+  }>;
 };
 
-const GenerateQuestionsModal: React.FC<Props> = ({ open, onClose, onAddQuestionsBulk, seedQuestions }) => {
-  const [topic, setTopic] = useState('riñón');
-  const [count, setCount] = useState(3);
+const GenerateQuestionsModal: React.FC<Props> = ({
+  open,
+  onClose,
+  onAddQuestionsBulk,
+  seedQuestions
+}) => {
+  const [topic, setTopic] = useState<string>(''); // ahora opcional si useSeed=true
+  const [count, setCount] = useState<number>(3);
   const [difficulty, setDifficulty] = useState<'basica' | 'media' | 'avanzada'>('basica');
-  const [useSeed, setUseSeed] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [useSeed, setUseSeed] = useState<boolean>(true); // por defecto activado para tu flujo
+  const [seedLimit, setSeedLimit] = useState<number>(10); // hasta 10 semillas
+  const [loading, setLoading] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string>('');
+
+  const totalSeeds = seedQuestions.length;
 
   const seedPayload: SeedQuestion[] = useMemo(() => {
-    if (!useSeed) return [];
-    return seedQuestions.slice(0, 5).map((q) => {
+    if (!useSeed || totalSeeds === 0) return [];
+    const take = Math.min(Math.max(seedLimit || 10, 1), 10);
+    return seedQuestions.slice(0, take).map((q) => {
       const correcta = q.alternativas.find((a) => a.es_correcta)?.texto || '';
       const alternativas = q.alternativas.map((a) => a.texto);
       return { texto: q.texto, alternativas, correcta };
     });
-  }, [useSeed, seedQuestions]);
+  }, [useSeed, seedQuestions, seedLimit, totalSeeds]);
 
   if (!open) return null;
 
@@ -38,12 +54,17 @@ const GenerateQuestionsModal: React.FC<Props> = ({ open, onClose, onAddQuestions
     setLoading(true);
     setErrorMsg('');
     try {
+      const topicTrim = topic.trim();
+
+      // Si useSeed=true y no hay tema, pedimos inferir desde semillas
       const payload: GenerateQuestionsRequest = {
-        topic: topic.trim(),
+        topic: topicTrim,
         count: clamp(Number(count || 3), 1, 5),
         difficulty,
         useSeed,
-        seed: seedPayload
+        seed: seedPayload,
+        seedLimit: Math.min(Math.max(seedLimit || 10, 1), 10),
+        topicFromSeed: useSeed && !topicTrim && seedPayload.length > 0
       };
 
       const r = await fetch('/api/generate-questions', {
@@ -61,7 +82,7 @@ const GenerateQuestionsModal: React.FC<Props> = ({ open, onClose, onAddQuestions
       const appQs = mapGeneratedToApp(data);
 
       if (!appQs.length) {
-        setErrorMsg('La IA no entregó preguntas en el formato requerido. Intenta de nuevo cambiando el tema o la cantidad.');
+        setErrorMsg('La IA no entregó preguntas en el formato requerido. Intenta con otro tema, cantidad o más/menos semillas.');
         return;
       }
 
@@ -74,6 +95,9 @@ const GenerateQuestionsModal: React.FC<Props> = ({ open, onClose, onAddQuestions
     }
   };
 
+  const disableGenerate =
+    (!useSeed && !topic.trim()) || (useSeed && seedQuestions.length === 0 && !topic.trim());
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
@@ -85,14 +109,27 @@ const GenerateQuestionsModal: React.FC<Props> = ({ open, onClose, onAddQuestions
 
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-muted-foreground block mb-1">Tema / Especificación</label>
-            <Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Ej.: riñón" />
+            <label className="text-xs text-muted-foreground block mb-1">
+              Tema / Especificación {useSeed ? <span className="text-xs text-muted-foreground">(opcional si usas guía)</span> : null}
+            </label>
+            <Input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder={useSeed ? 'Opcional si usas guía' : 'Ej.: riñón'}
+              disabled={false}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Cantidad (1–5)</label>
-              <Input type="number" min={1} max={5} value={count} onChange={(e) => setCount(Number(e.target.value))} />
+              <Input
+                type="number"
+                min={1}
+                max={5}
+                value={count}
+                onChange={(e) => setCount(Number(e.target.value))}
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Dificultad</label>
@@ -109,15 +146,46 @@ const GenerateQuestionsModal: React.FC<Props> = ({ open, onClose, onAddQuestions
           </div>
 
           <div className="flex items-center gap-2">
-            <input id="use-seed" type="checkbox" checked={useSeed} onChange={(e) => setUseSeed(e.target.checked)} className="h-4 w-4" />
-            <label htmlFor="use-seed" className="text-sm">Usar como guía las preguntas seleccionadas en el constructor</label>
+            <input
+              id="use-seed"
+              type="checkbox"
+              checked={useSeed}
+              onChange={(e) => setUseSeed(e.target.checked)}
+              className="h-4 w-4"
+            />
+            <label htmlFor="use-seed" className="text-sm">
+              Usar como guía las preguntas seleccionadas en el constructor
+            </label>
           </div>
 
-          {errorMsg && <div className="text-sm text-red-600 whitespace-pre-wrap">{errorMsg}</div>}
+          {useSeed && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">
+                  Cantidad de preguntas guía (máx. 10)
+                </label>
+                <select
+                  className="w-full border rounded-md p-2 text-sm bg-background"
+                  value={seedLimit}
+                  onChange={(e) => setSeedLimit(Number(e.target.value))}
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Disponibles: {totalSeeds}. Se usarán: {Math.min(seedLimit, totalSeeds)}.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="text-sm text-red-600 whitespace-pre-wrap">{errorMsg}</div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-            <Button onClick={handleSubmit} disabled={loading || !topic.trim()}>
+            <Button onClick={handleSubmit} disabled={loading || disableGenerate}>
               {loading ? 'Generando…' : 'Generar'}
             </Button>
           </div>
