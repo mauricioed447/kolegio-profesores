@@ -10,12 +10,12 @@ const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
 
 type GenerateQuestionsRequest = {
   topic: string; // puede estar vacío si useSeed=true
-  count?: number;
+  count?: number; // 1..5
   difficulty?: 'basica' | 'media' | 'avanzada';
   useSeed?: boolean;
   seed?: Array<{ texto: string; alternativas: string[]; correcta: string }>;
-  seedLimit?: number;      // hasta 10
-  topicFromSeed?: boolean; // inferir tema desde semillas
+  seedLimit?: number;      // máx 10 (opcional)
+  topicFromSeed?: boolean; // inferir tema desde semillas (opcional)
 };
 
 type GeneratedQuestionWire = {
@@ -53,7 +53,8 @@ const schema = {
 };
 
 function buildPromptBase(topic: string, count: number, difficulty: string) {
-  return `Genera ${count} preguntas de opción múltiple en español neutro${topic ? ` sobre "${topic}"` : ''}. Dificultad: ${difficulty}.
+  const about = topic ? ` sobre "${topic}"` : '';
+  return `Genera ${count} preguntas de opción múltiple en español neutro${about}. Dificultad: ${difficulty}.
 Requisitos estrictos de formato:
 - RESPONDE SOLO JSON (array) sin texto adicional ni explicaciones.
 - Cada objeto: { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] }.
@@ -142,7 +143,7 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-/** Extrae texto y JSON embebido (inlineData base64) de la respuesta de Vertex. */
+/** Lee texto y JSON embebido (inlineData base64) de la respuesta de Vertex. */
 function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: string[] } {
   const parts = data?.candidates?.[0]?.content?.parts;
   const kinds: string[] = [];
@@ -162,9 +163,7 @@ function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: st
         const parsed = JSON.parse(decoded);
         if (Array.isArray(parsed)) jsonArrays.push(parsed);
         else if (parsed && Array.isArray(parsed.questions)) jsonArrays.push(parsed.questions);
-      } catch {
-        // ignorar
-      }
+      } catch { /* ignore */ }
     }
   }
   return { text: texts.join('\n'), jsonArrays, kinds };
@@ -214,10 +213,10 @@ async function callModel(accessToken: string, model: string, prompt: string, tem
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature,
-      // En Vertex los nombres camelCase funcionan; algunos entornos también aceptan snake_case.
-      maxOutputTokens: 1024,
-      responseMimeType: 'application/json',
-      responseSchema: schema
+      // En Vertex estos nombres en snake_case son aceptados y evitan ambigüedad.
+      max_output_tokens: 1024,
+      response_mime_type: 'application/json',
+      response_schema: schema
     }
   };
   return fetch(url, {
@@ -246,7 +245,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       payload.difficulty === 'avanzada' ? 'avanzada' :
       payload.difficulty === 'media' ? 'media' : 'básica';
 
-    const seeds = Array.isArray(payload.seed) ? payload.seed.slice(0, Math.min(payload.seedLimit || 10, 10)) : [];
+    const seedsAll = Array.isArray(payload.seed) ? payload.seed : [];
+    const seeds = seedsAll.slice(0, Math.min(payload.seedLimit || 10, 10));
     const topicEmpty = !payload.topic || !payload.topic.trim();
     const shouldInfer = !!(payload.useSeed && seeds.length > 0 && (payload.topicFromSeed || topicEmpty));
     const inferred = shouldInfer ? inferTopicFromSeeds(seeds) : null;
@@ -270,7 +270,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let data: any; try { data = JSON.parse(text); } catch { data = {}; }
         const { text: partsText, jsonArrays, kinds } = extractParts(data);
 
-        // Preferimos JSON de inlineData; si no hay, parseamos el texto.
+        // Preferimos JSON embebido; si no hay, parseamos texto.
         const arr = jsonArrays.length ? jsonArrays[0] : tryParseArray(partsText);
         const normalized = normalizeItems(arr);
 
