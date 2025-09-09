@@ -20,7 +20,6 @@ type GeneratedQuestion = {
   texto?: string;
   correct_answer?: string;
   incorrect_answers?: string[];
-  // sinónimos que podríamos recibir
   enunciado?: string;
   correcta?: string;
   respuesta_correcta?: string;
@@ -126,21 +125,17 @@ function extractAllTextParts(json: any): string {
 
 function tryParseArray(text: string): any[] {
   if (!text) return [];
-  // 1) directo
   try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch {}
-  // 2) dentro de ```json ... ```
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) {
     try { const v = JSON.parse(fence[1].trim()); return Array.isArray(v) ? v : []; } catch {}
   }
-  // 3) heurística: primer '[' a último ']'
   const first = text.indexOf('[');
   const last = text.lastIndexOf(']');
   if (first !== -1 && last !== -1 && last > first) {
     const slice = text.slice(first, last + 1);
     try { const v = JSON.parse(slice); return Array.isArray(v) ? v : []; } catch {}
   }
-  // 4) objeto con clave questions
   try {
     const obj = JSON.parse(text);
     const arr = (obj && Array.isArray(obj.questions)) ? obj.questions : [];
@@ -151,20 +146,16 @@ function tryParseArray(text: string): any[] {
 
 function normalizeItems(raw: any[]): GeneratedQuestion[] {
   return raw.map((q) => {
-    // tolerar distintos nombres
     const texto = (q.texto ?? q.enunciado ?? '').toString().trim();
     const correct =
       (q.correct_answer ?? q.correcta ?? q['respuesta_correcta'] ?? '').toString().trim();
 
-    // incorrectas vs distractores u opciones (quitando la correcta)
     let incorrects: string[] = Array.isArray(q.incorrect_answers) ? q.incorrect_answers
                           : Array.isArray(q.incorrectas) ? q.incorrectas
                           : Array.isArray(q.distractores) ? q.distractores
                           : Array.isArray(q.opciones) ? q.opciones.filter((o: any) => o !== correct)
                           : [];
     incorrects = incorrects.map((s: any) => String(s)).filter(Boolean);
-
-    // asegurar 3
     if (correct && incorrects.length > 3) incorrects = incorrects.slice(0, 3);
 
     return { texto, correct_answer: correct, incorrect_answers: incorrects, tags: Array.isArray(q.tags) ? q.tags : [] };
@@ -176,11 +167,12 @@ async function callModel(accessToken: string, model: string, prompt: string) {
   const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${model}:generateContent`;
   const body = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    // IMPORTANTE: Vertex espera SNAKE_CASE aquí (response_mime_type / response_schema / max_output_tokens)
     generationConfig: {
       temperature: 0.7,
-      maxOutputTokens: 1024,
-      responseMimeType: 'application/json',
-      responseSchema: schema
+      max_output_tokens: 1024,
+      response_mime_type: 'application/json',
+      response_schema: schema
     }
   };
   return fetch(url, {
@@ -213,13 +205,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const status = r.status;
       const text = await r.text().catch(() => '');
       if (r.ok) {
-        // r.json() no se puede leer después de text(), por eso parseamos desde text.
+        // Parseamos siempre desde "text" (lo ya leído).
         let data: any; try { data = JSON.parse(text); } catch { data = {}; }
         const rawText = extractAllTextParts(data);
         const arr = tryParseArray(rawText);
         const normalized = normalizeItems(arr);
 
-        console.log(`[generate-questions] model=${model} items=${normalized.length}`); // visible en Vercel Logs
+        console.log(`[generate-questions] model=${model} items=${normalized.length}`); // Vercel → Logs
 
         return res.status(200).json(normalized);
       }
