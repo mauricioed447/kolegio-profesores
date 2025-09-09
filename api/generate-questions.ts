@@ -1,7 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createSign } from 'crypto';
 
-const MODEL = 'gemini-1.5-flash';
+// Modelos vigentes (API/SDK): 2.5 y 2.0. 1.5 está obsoleto.
+const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'];
+
 const PROJECT = process.env.GOOGLE_CLOUD_PROJECT || '';
 const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
@@ -11,11 +13,7 @@ type GenerateQuestionsRequest = {
   count?: number; // 1-5
   difficulty?: 'basica' | 'media' | 'avanzada';
   useSeed?: boolean;
-  seed?: Array<{
-    texto: string;
-    alternativas: string[];
-    correcta: string;
-  }>;
+  seed?: Array<{ texto: string; alternativas: string[]; correcta: string }>;
 };
 
 type GeneratedQuestion = {
@@ -38,10 +36,7 @@ const schema = {
         minItems: 3,
         maxItems: 3
       },
-      tags: {
-        type: 'array',
-        items: { type: 'string' }
-      }
+      tags: { type: 'array', items: { type: 'string' } }
     },
     required: ['texto', 'correct_answer', 'incorrect_answers']
   },
@@ -49,19 +44,18 @@ const schema = {
   maxItems: 5
 };
 
-function buildPrompt(payload: GenerateQuestionsRequest) {
-  const count = Math.min(Math.max(payload.count ?? 3, 1), 5);
-  const difficulty =
-    payload.difficulty === 'avanzada' ? 'avanzada' :
-    payload.difficulty === 'media' ? 'media' : 'básica';
+function buildPrompt(p: GenerateQuestionsRequest) {
+  const count = Math.min(Math.max(p.count ?? 3, 1), 5);
+  const difficulty = p.difficulty === 'avanzada' ? 'avanzada' :
+                     p.difficulty === 'media' ? 'media' : 'básica';
 
-  const seedTxt = (payload.useSeed && payload.seed && payload.seed.length)
-    ? `\n\nGuía (ejemplos):\n${payload.seed.slice(0, 5).map((s, i) =>
-      `Ejemplo ${i + 1}:\n- Enunciado: ${s.texto}\n- Alternativas: ${s.alternativas.join(' | ')}\n- Correcta: ${s.correcta}`
-    ).join('\n')}\n`
+  const seedTxt = (p.useSeed && p.seed?.length)
+    ? `\n\nGuía (ejemplos):\n${p.seed.slice(0, 5).map((s, i) =>
+        `Ejemplo ${i + 1}:\n- Enunciado: ${s.texto}\n- Alternativas: ${s.alternativas.join(' | ')}\n- Correcta: ${s.correcta}`
+      ).join('\n')}\n`
     : '';
 
-  return `Crea ${count} preguntas de opción múltiple en español neutro sobre el tema "${payload.topic}". Dificultad: ${difficulty}.
+  return `Crea ${count} preguntas de opción múltiple en español neutro sobre el tema "${p.topic}". Dificultad: ${difficulty}.
 Requisitos:
 - Devuelve SOLO JSON (array) con objetos { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] }.
 - 1 sola correcta; 3 incorrectas plausibles.
@@ -109,11 +103,7 @@ async function getAccessToken(): Promise<string> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   });
-
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => '');
-    throw new Error(`Fallo al obtener access_token: ${resp.status} ${txt.slice(0, 2000)}`);
-  }
+  if (!resp.ok) throw new Error(`Fallo access_token: ${resp.status} ${await resp.text()}`);
   const data = await resp.json() as { access_token: string };
   if (!data.access_token) throw new Error('Respuesta sin access_token');
   return data.access_token;
@@ -130,68 +120,64 @@ function parseVertexResponse(json: any): GeneratedQuestion[] {
   }
 }
 
+async function callModel(accessToken: string, model: string, prompt: string) {
+  const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${model}:generateContent`;
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+      responseSchema: schema
+    }
+  };
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method Not Allowed' });
-    return;
-  }
-  if (!PROJECT || !LOCATION) {
-    res.status(500).json({ error: 'Faltan variables: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION' });
-    return;
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+  if (!PROJECT || !LOCATION) return res.status(500).json({ error: 'Faltan GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION' });
 
   let payload: GenerateQuestionsRequest;
   try {
-    payload = req.body && typeof req.body === 'object' ? req.body : JSON.parse(req.body as any);
+    payload = typeof req.body === 'object' ? req.body : JSON.parse(req.body as any);
   } catch {
-    res.status(400).json({ error: 'JSON inválido' });
-    return;
+    return res.status(400).json({ error: 'JSON inválido' });
   }
 
   try {
     const accessToken = await getAccessToken();
     const prompt = buildPrompt(payload);
 
-    const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${MODEL}:generateContent`;
+    let lastStatus = 0;
+    let lastText = '';
 
-    const body = {
-      contents: [
-        { role: 'user', parts: [{ text: prompt }] }
-      ],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 1024,
-        responseMimeType: 'application/json',
-        responseSchema: schema
+    for (const model of MODEL_CANDIDATES) {
+      const r = await callModel(accessToken, model, prompt);
+      if (r.ok) {
+        const data = await r.json();
+        const items = parseVertexResponse(data);
+        const normalized = (items || []).map((q) => ({
+          texto: String(q.texto || '').trim(),
+          correct_answer: String(q.correct_answer || '').trim(),
+          incorrect_answers: Array.isArray(q.incorrect_answers) ? q.incorrect_answers.slice(0, 3).map(String) : [],
+          tags: Array.isArray(q.tags) ? q.tags.map(String) : []
+        })).filter(q => q.texto && q.correct_answer && q.incorrect_answers.length === 3);
+
+        return res.status(200).json(normalized);
       }
-    };
-
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!r.ok) {
-      const err = await r.text().catch(() => '');
-      res.status(r.status).json({ error: 'Vertex AI error', details: err.slice(0, 2000) });
-      return;
+      lastStatus = r.status;
+      lastText = await r.text().catch(() => '');
     }
 
-    const data = await r.json();
-    const items = parseVertexResponse(data);
-
-    const normalized = (items || []).map((q) => ({
-      texto: String(q.texto || '').trim(),
-      correct_answer: String(q.correct_answer || '').trim(),
-      incorrect_answers: Array.isArray(q.incorrect_answers) ? q.incorrect_answers.slice(0, 3).map(String) : [],
-      tags: Array.isArray(q.tags) ? q.tags.map(String) : []
-    })).filter(q => q.texto && q.correct_answer && q.incorrect_answers.length === 3);
-
-    res.status(200).json(normalized);
+    res.status(lastStatus || 502).json({ error: 'Vertex AI error', details: lastText.slice(0, 2000) });
   } catch (e: any) {
     res.status(500).json({ error: 'Fallo en generación', details: e?.message || String(e) });
   }
