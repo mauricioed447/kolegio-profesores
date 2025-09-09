@@ -1,15 +1,17 @@
 export type Difficulty = 'basica' | 'media' | 'avanzada';
 
 export type GenerateQuestionsRequest = {
-  topic: string;
-  count?: number;
+  topic: string;                 // puede venir vacío si useSeed=true
+  count?: number;                // 1-5
   difficulty?: Difficulty;
-  useSeed?: boolean;
+  useSeed?: boolean;             // usar guía
   seed?: Array<{
     texto: string;
     alternativas: string[];
     correcta: string;
   }>;
+  seedLimit?: number;            // cuántas semillas usar (máx 10)
+  topicFromSeed?: boolean;       // si true, inferimos el tema desde las semillas
 };
 
 export type GeneratedQuestion = {
@@ -19,6 +21,7 @@ export type GeneratedQuestion = {
   tags?: string[];
 };
 
+// Tipos usados en el front (constructor)
 export type AppAlternative = {
   id: string;
   texto: string;
