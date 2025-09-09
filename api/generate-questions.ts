@@ -1,34 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createSign } from 'crypto';
 
-// Modelos vigentes (Vertex). Fallback en orden.
+// ========== Config ==========
 const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'];
-
 const PROJECT = process.env.GOOGLE_CLOUD_PROJECT || '';
 const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
+// ============================
 
 type GenerateQuestionsRequest = {
-  topic: string; // puede estar vacío si useSeed=true
+  topic: string; // puede ir vacío si useSeed=true
   count?: number; // 1..5
   difficulty?: 'basica' | 'media' | 'avanzada';
   useSeed?: boolean;
   seed?: Array<{ texto: string; alternativas: string[]; correcta: string }>;
-  seedLimit?: number;      // máx 10 (opcional)
-  topicFromSeed?: boolean; // inferir tema desde semillas (opcional)
-};
-
-type GeneratedQuestionWire = {
-  texto?: string;
-  correct_answer?: string;
-  incorrect_answers?: string[];
-  enunciado?: string;
-  correcta?: string;
-  respuesta_correcta?: string;
-  opciones?: string[];
-  incorrectas?: string[];
-  distractores?: string[];
-  tags?: string[];
+  seedLimit?: number;      // máx 10
+  topicFromSeed?: boolean; // inferir tema
 };
 
 function buildPromptBase(topic: string, count: number, difficulty: string) {
@@ -121,11 +108,11 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-/** Lee texto y JSON embebido (inlineData base64) de la respuesta de Vertex. */
+// -------- extracción de partes --------
 function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: string[]; block?: string } {
   const kinds: string[] = [];
   const parts = data?.candidates?.[0]?.content?.parts;
-  const block = data?.promptFeedback?.blockReason; // e.g., "SAFETY"
+  const block = data?.promptFeedback?.blockReason;
   if (!Array.isArray(parts)) return { text: '', jsonArrays: [], kinds, block };
 
   const texts: string[] = [];
@@ -148,42 +135,36 @@ function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: st
   return { text: texts.join('\n'), jsonArrays, kinds, block };
 }
 
-/** Parser "duro": intenta recuperar un array desde texto con variadas convenciones. */
+// -------- parsers --------
 function tryParseArray(text: string): any[] {
   if (!text) return [];
-  // 1) JSON directo
   try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch {}
-  // 2) ```json ... ```
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) { try { const v = JSON.parse(fence[1].trim()); return Array.isArray(v) ? v : []; } catch {} }
-  // 3) [ ... ] heurístico
   const first = text.indexOf('[');
   const last = text.lastIndexOf(']');
   if (first !== -1 && last !== -1 && last > first) {
     const slice = text.slice(first, last + 1);
     try { const v = JSON.parse(slice); return Array.isArray(v) ? v : []; } catch {}
   }
-  // 4) objeto con .questions
   try {
     const obj = JSON.parse(text);
     const arr = (obj && Array.isArray(obj.questions)) ? obj.questions : [];
     if (arr.length) return arr;
   } catch {}
 
-  // 5) Heurística por bloques con "Pregunta/Enunciado", "Opciones/Alternativas", "Correcta"
+  // Heurística por bloques
   const blocks = text
-    .split(/\n\s*\n+/) // separa por doble salto
+    .split(/\n\s*\n+/)
     .map(b => b.trim())
     .filter(b => /pregunta|enunciado/i.test(b) && /(correcta|respuesta correcta)/i.test(b));
 
   const results: any[] = [];
   for (const b of blocks) {
-    // enunciado
     let enunciado = '';
     const enMatch = b.match(/(?:pregunta|enunciado)\s*:\s*([\s\S]*?)(?:\n|$)/i);
     enunciado = (enMatch?.[1] || '').replace(/^\d+[\.\)]\s*/, '').trim();
 
-    // opciones / alternativas
     let opciones: string[] = [];
     const sec = b.split(/(?:opciones|alternativas)\s*:\s*/i)[1] || '';
     if (sec) {
@@ -194,21 +175,18 @@ function tryParseArray(text: string): any[] {
         if (m) opciones.push(m[1].trim().replace(/\s*\(correcta\)\s*$/i, ''));
       }
       if (!opciones.length) {
-        // también admitir separadas por ; o |
         opciones = sec.split(/[;|]/).map(s => s.trim()).filter(Boolean);
       }
     }
-    // correcta
+
     let correcta = '';
     const c1 = b.match(/(?:respuesta\s*correcta|correcta)\s*:\s*([^\n]+)/i);
     if (c1?.[1]) correcta = c1[1].trim();
     if (!correcta && opciones.length) {
-      // si marcó "(correcta)" en alguna opción
       const cMark = b.match(/^(?:[-*•]\s*|[a-d]\)\s*|[a-d]\.\s*)(.+?)\s*\(correcta\)/im);
       if (cMark?.[1]) correcta = cMark[1].trim();
     }
 
-    // incorrectas
     let incorrectas: string[] = [];
     const incSec = b.split(/(?:incorrectas|distractores)\s*:\s*/i)[1] || '';
     if (incSec) {
@@ -256,20 +234,69 @@ function normalizeItems(raw: any[]): { texto: string; correct_answer: string; in
   .filter(q => q.texto && q.correct_answer && Array.isArray(q.incorrect_answers) && q.incorrect_answers.length === 3);
 }
 
-async function callModel(accessToken: string, model: string, prompt: string, temperature: number) {
+// -------- llamada a Vertex (tres variantes) --------
+type Variant = 'minimal' | 'schema_snake' | 'schema_camel';
+
+const jsonSchema = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      texto: { type: 'string' },
+      correct_answer: { type: 'string' },
+      incorrect_answers: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 3,
+        maxItems: 3
+      },
+      tags: { type: 'array', items: { type: 'string' } }
+    },
+    required: ['texto', 'correct_answer', 'incorrect_answers']
+  },
+  minItems: 1,
+  maxItems: 5
+};
+
+// Safety a lo más permisivo (educativo)
+const safetySettings = [
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+];
+
+async function callModel(accessToken: string, model: string, prompt: string, temperature: number, variant: Variant) {
   const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${model}:generateContent`;
-  const body = {
+
+  const base = {
     systemInstruction: {
       role: 'system',
-      parts: [{ text: 'Eres un generador de ítems educativos. Devuelve solo JSON válido (array). No incluyas texto fuera del JSON.' }]
+      parts: [{ text: 'Eres un generador de ítems educativos. Devuelve solo JSON (array). No incluyas texto fuera del JSON.' }]
     },
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature,
-      maxOutputTokens: 1024
-      // evitamos response_schema/mime para no forzar silencio en algunos despliegues
-    }
-  };
+    safetySettings
+  } as any;
+
+  let generationConfig: any;
+  if (variant === 'minimal') {
+    generationConfig = { temperature, maxOutputTokens: 1024 };
+  } else if (variant === 'schema_snake') {
+    generationConfig = {
+      temperature, max_output_tokens: 1024,
+      response_mime_type: 'application/json',
+      response_schema: jsonSchema
+    };
+  } else { // schema_camel
+    generationConfig = {
+      temperature, maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+      responseSchema: jsonSchema
+    };
+  }
+
+  const body = { ...base, generationConfig };
+
   return fetch(url, {
     method: 'POST',
     headers: {
@@ -307,37 +334,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (payload.useSeed && seeds.length > 0) {
       prompt = addSeedGuideToPrompt(prompt, seeds, inferred);
     }
-
     const temperature = payload.useSeed ? 0.3 : 0.7;
 
     let lastStatus = 0;
     let lastText = '';
+    const variants: Variant[] = ['minimal', 'schema_snake', 'schema_camel'];
 
     for (const model of MODEL_CANDIDATES) {
-      const r = await callModel(accessToken, model, prompt, temperature);
-      const status = r.status;
-      const text = await r.text().catch(() => '');
-      if (r.ok) {
-        let data: any; try { data = JSON.parse(text); } catch { data = {}; }
-        const { text: partsText, jsonArrays, kinds, block } = extractParts(data);
+      for (const variant of variants) {
+        const r = await callModel(accessToken, model, prompt, temperature, variant);
+        const status = r.status;
+        const text = await r.text().catch(() => '');
+        if (r.ok) {
+          let data: any; try { data = JSON.parse(text); } catch { data = {}; }
+          const { text: partsText, jsonArrays, kinds, block } = extractParts(data);
 
-        // Preferimos JSON embebido; si no hay, parseamos texto y, si falla, heurística por bloques.
-        let arr: any[] = jsonArrays.length ? jsonArrays[0] : [];
-        if (!arr.length) {
-          arr = tryParseArray(partsText);
+          let arr: any[] = jsonArrays.length ? jsonArrays[0] : [];
+          if (!arr.length) arr = tryParseArray(partsText);
+
+          const normalized = normalizeItems(arr);
+
+          console.log(`[generate-questions] model=${model} v=${variant} items=${normalized.length} parts=${kinds.join('+') || 'none'} text_len=${(partsText||'').length} seeds=${seeds.length} inferred="${inferred || ''}" block=${block || 'none'}`);
+
+          if (normalized.length) {
+            return res.status(200).json(normalized);
+          }
+          // si no hubo items, probar siguiente variante
+          lastStatus = status;
+          lastText = text;
+          continue;
         }
-
-        const normalized = normalizeItems(arr);
-
-        console.log(`[generate-questions] model=${model} items=${normalized.length} parts=${kinds.join('+') || 'none'} text_len=${(partsText||'').length} seeds=${seeds.length} inferred="${inferred || ''}" block=${block || 'none'}`);
-
-        return res.status(200).json(normalized);
+        lastStatus = status;
+        lastText = text;
       }
-      lastStatus = status;
-      lastText = text;
+      // probar siguiente modelo
     }
 
-    return res.status(lastStatus || 502).json({ error: 'Vertex AI error', details: lastText.slice(0, 2000) });
+    return res.status(lastStatus || 502).json({ error: 'Vertex AI vacío', details: lastText.slice(0, 1200) });
   } catch (e: any) {
     return res.status(500).json({ error: 'Fallo en generación', details: e?.message || String(e) });
   }
