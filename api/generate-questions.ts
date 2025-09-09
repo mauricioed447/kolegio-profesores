@@ -62,9 +62,13 @@ Requisitos estrictos de formato:
 - Nada de bloques de código, cabeceras o comentarios.`.trim();
 }
 
-function addSeedGuideToPrompt(prompt: string, seeds: {texto:string; alternativas:string[]; correcta:string}[], inferredTopic: string | null) {
+function addSeedGuideToPrompt(
+  prompt: string,
+  seeds: {texto:string; alternativas:string[]; correcta:string}[],
+  inferredTopic: string | null
+) {
   const guideHeader = inferredTopic
-    ? `\n\nTema inferido desde la guía: ${inferredTopic}.\nAlinea el estilo/registro/terminología con los siguientes ejemplos (no los repitas literalmente):\n`
+    ? `\n\nTema inferido desde la guía: ${inferredTopic}.\nAlinea estilo/registro/terminología con los ejemplos (no los repitas literalmente):\n`
     : `\n\nUsa la guía siguiente para alinear estilo/registro/terminología (no repitas literalmente):\n`;
 
   const examples = seeds.slice(0, 3).map((s, i) =>
@@ -75,18 +79,17 @@ function addSeedGuideToPrompt(prompt: string, seeds: {texto:string; alternativas
 }
 
 function inferTopicFromSeeds(seeds: {texto:string; alternativas:string[]; correcta:string}[]): string {
-  // extracción simple de keywords (ES) sin librerías
   const stop = new Set([
     'el','la','los','las','un','una','unos','unas','de','del','al','y','o','u','en','para','por','con',
     'se','que','qué','cual','cuál','cuáles','dónde','como','cómo','cuando','cuándo','porqué','porque',
-    'es','son','a','su','sus','sus','lo','le','les','más','menos','muy','sobre','entre','hasta','desde',
+    'es','son','a','su','sus','lo','le','les','más','menos','muy','sobre','entre','hasta','desde',
     'este','esta','estos','estas','ese','esa','esos','esas','aquel','aquella','aquellos','aquellas',
-    'qué','cuál','quién','quiénes','cuánto','cuánta','cuántos','cuántas','donde','cuando'
+    'quién','quiénes','cuánto','cuánta','cuántos','cuántas','donde','cuando'
   ]);
   const text = seeds.map(s => `${s.texto}. ${s.correcta}. ${s.alternativas.join(' ')}`).join(' ');
   const tokens = text
     .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // sin tildes
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-záéíóúñü0-9\s]/gi, ' ')
     .split(/\s+/)
     .filter(t => t.length > 3 && !stop.has(t));
@@ -139,13 +142,32 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-function extractAllTextParts(json: any): string {
-  const parts = json?.candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) return '';
-  return parts
-    .map((p: any) => typeof p?.text === 'string' ? p.text : '')
-    .filter(Boolean)
-    .join('\n');
+/** Extrae texto y JSON embebido (inlineData base64) de la respuesta de Vertex. */
+function extractParts(data: any): { text: string; jsonArrays: any[][]; kinds: string[] } {
+  const parts = data?.candidates?.[0]?.content?.parts;
+  const kinds: string[] = [];
+  if (!Array.isArray(parts)) return { text: '', jsonArrays: [], kinds };
+
+  const texts: string[] = [];
+  const jsonArrays: any[][] = [];
+
+  for (const p of parts) {
+    if (typeof p?.text === 'string') {
+      kinds.push('text');
+      texts.push(p.text);
+    } else if (p?.inlineData?.mimeType === 'application/json' && typeof p?.inlineData?.data === 'string') {
+      kinds.push('inlineData');
+      try {
+        const decoded = Buffer.from(p.inlineData.data, 'base64').toString('utf8');
+        const parsed = JSON.parse(decoded);
+        if (Array.isArray(parsed)) jsonArrays.push(parsed);
+        else if (parsed && Array.isArray(parsed.questions)) jsonArrays.push(parsed.questions);
+      } catch {
+        // ignorar
+      }
+    }
+  }
+  return { text: texts.join('\n'), jsonArrays, kinds };
 }
 
 function tryParseArray(text: string): any[] {
@@ -192,9 +214,10 @@ async function callModel(accessToken: string, model: string, prompt: string, tem
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature,
-      max_output_tokens: 1024,
-      response_mime_type: 'application/json',
-      response_schema: schema
+      // En Vertex los nombres camelCase funcionan; algunos entornos también aceptan snake_case.
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+      responseSchema: schema
     }
   };
   return fetch(url, {
@@ -226,7 +249,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const seeds = Array.isArray(payload.seed) ? payload.seed.slice(0, Math.min(payload.seedLimit || 10, 10)) : [];
     const topicEmpty = !payload.topic || !payload.topic.trim();
     const shouldInfer = !!(payload.useSeed && seeds.length > 0 && (payload.topicFromSeed || topicEmpty));
-
     const inferred = shouldInfer ? inferTopicFromSeeds(seeds) : null;
     const topic = topicEmpty && inferred ? inferred : (payload.topic || '');
 
@@ -246,11 +268,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const text = await r.text().catch(() => '');
       if (r.ok) {
         let data: any; try { data = JSON.parse(text); } catch { data = {}; }
-        const rawText = extractAllTextParts(data);
-        const arr = tryParseArray(rawText);
+        const { text: partsText, jsonArrays, kinds } = extractParts(data);
+
+        // Preferimos JSON de inlineData; si no hay, parseamos el texto.
+        const arr = jsonArrays.length ? jsonArrays[0] : tryParseArray(partsText);
         const normalized = normalizeItems(arr);
 
-        console.log(`[generate-questions] model=${model} items=${normalized.length} seed_count=${seeds.length} inferred="${inferred || ''}"`);
+        console.log(`[generate-questions] model=${model} items=${normalized.length} parts=${kinds.join('+') || 'none'} seeds=${seeds.length} inferred="${inferred || ''}"`);
         return res.status(200).json(normalized);
       }
       lastStatus = status;
