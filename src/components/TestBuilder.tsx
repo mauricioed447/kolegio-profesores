@@ -1,80 +1,164 @@
 import React from 'react';
-import { useDroppable } from '@dnd-kit/core';
-// Línea corregida: añadimos SortableContext y verticalListSortingStrategy
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'; 
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Pregunta } from '../types';
-import { GripVertical, Trash2 } from 'lucide-react';
+import { useSortable, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { GripVertical, Trash2, Plus, X } from 'lucide-react';
 
-// Componente para una pregunta individual dentro del constructor
-const SortableQuestionItem = ({ question, onRemove }: { question: Pregunta, onRemove: (id: string) => void }) => {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging
-  } = useSortable({ id: question.id, data: { from: 'builder', question } });
+import type { PreguntaApp } from '@/App';
 
-  const style = {
-    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+type Props = {
+  questions: PreguntaApp[];
+  onRemove: (id: string) => void;
+  onUpdateQuestionText: (qId: string, newText: string) => void;
+  onUpdateAlternativeText: (qId: string, altId: string, newText: string) => void;
+  onSetCorrectAlternative: (qId: string, altId: string) => void;
+  onAddAlternative: (qId: string) => void;
+  onRemoveAlternative: (qId: string, altId: string) => void;
+  onAddManualQuestion: () => void;              // 👈 nuevo
+};
+
+const SortableQuestionRow: React.FC<
+  React.PropsWithChildren<{ id: string }>
+> = ({ id, children }) => {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id,
+    data: { from: 'builder' },
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
     transition,
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`p-3 border rounded-md bg-white shadow-sm flex items-start ${isDragging ? 'dragging' : ''}`}
-    >
-      <div {...attributes} {...listeners} className="cursor-grab p-1 mr-2">
-        <GripVertical className="h-5 w-5 text-gray-400" />
+    <div ref={setNodeRef} style={style} {...attributes} className="mb-3">
+      <div className="flex items-center gap-2 mb-2">
+        <button
+          {...listeners}
+          className="p-1 rounded hover:bg-muted text-muted-foreground cursor-grab active:cursor-grabbing"
+          aria-label="Reordenar"
+          title="Reordenar"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
       </div>
-      <div className="flex-1">
-        <p className="font-medium text-sm text-gray-800">{question.texto}</p>
-        <p className="text-xs text-gray-500 mt-1 pl-2 border-l-2">
-          {question.alternativas.find(alt => alt.es_correcta)?.texto || "Sin respuesta correcta"}
-        </p>
-      </div>
-      <button onClick={() => onRemove(question.id)} className="ml-2 p-1 text-red-500 hover:text-red-700">
-        <Trash2 className="h-5 w-5" />
-      </button>
+      {children}
     </div>
   );
 };
 
-
-interface TestBuilderProps {
-  questions: Pregunta[];
-  onRemove: (id: string) => void;
-}
-
-const TestBuilder: React.FC<TestBuilderProps> = ({ questions, onRemove }) => {
-  const { setNodeRef, isOver } = useDroppable({ id: 'test-builder-area' });
-
+const TestBuilder: React.FC<Props> = ({
+  questions,
+  onRemove,
+  onUpdateQuestionText,
+  onUpdateAlternativeText,
+  onSetCorrectAlternative,
+  onAddAlternative,
+  onRemoveAlternative,
+  onAddManualQuestion,
+}) => {
   return (
-    <div className="lg:col-span-5 bg-white p-4 rounded-lg shadow-md flex flex-col">
-      <h2 className="text-xl font-bold mb-1 text-gray-800">Constructor de la Prueba</h2>
-      <p className="text-sm text-gray-500 mb-4">Arrastra las preguntas para reordenarlas o elimínalas de la prueba.</p>
-      
-      <ScrollArea 
-        ref={setNodeRef} 
-        className={`flex-1 p-3 rounded-lg border-2 border-dashed transition-colors ${isOver ? 'over' : 'border-gray-300'}`}
-      >
-        <div className="space-y-2">
-            <SortableContext items={questions.map(q => q.id)} strategy={verticalListSortingStrategy}>
-              {questions.length > 0 ? (
-                questions.map(q => <SortableQuestionItem key={q.id} question={q} onRemove={onRemove} />)
-              ) : (
-                <div className="text-center text-gray-500 py-16">
-                  <p>Arrastra preguntas aquí para comenzar</p>
+    <Card className="lg:col-span-5 h-full">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Constructor de la Prueba</CardTitle>
+        <Button size="sm" onClick={onAddManualQuestion} title="Agregar nueva pregunta manual">
+          <Plus className="h-4 w-4 mr-1" /> Nueva pregunta manual
+        </Button>
+      </CardHeader>
+
+      <CardContent>
+        {questions.length === 0 && (
+          <div
+            id="test-builder-area"
+            className="h-40 border-2 border-dashed rounded-md flex items-center justify-center text-sm text-muted-foreground"
+          >
+            Agrega preguntas con el botón “+” (izquierda) o crea una con “Nueva pregunta manual”.
+          </div>
+        )}
+
+        {questions.length > 0 && (
+          <SortableContext items={questions.map((q) => q.id)} strategy={verticalListSortingStrategy}>
+            {questions.map((q, idx) => (
+              <SortableQuestionRow id={q.id} key={q.id}>
+                <div className="border rounded-lg bg-white shadow-sm">
+                  <div className="flex items-start justify-between p-3 border-b">
+                    <div className="text-sm font-semibold">{idx + 1}.</div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-red-600"
+                      onClick={() => onRemove(q.id)}
+                      title="Eliminar pregunta"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <div className="p-3 space-y-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1">
+                        Pregunta
+                      </label>
+                      <textarea
+                        value={q.texto}
+                        onChange={(e) => onUpdateQuestionText(q.id, e.target.value)}
+                        rows={3}
+                        className="w-full min-h-[72px] text-sm border rounded-md bg-background p-2 outline-none focus:ring-2 focus:ring-ring"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-2">
+                        Alternativas (marca la correcta)
+                      </label>
+                      <div className="space-y-2">
+                        {q.alternativas.map((a, i) => (
+                          <div key={a.id} className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`correct-${q.id}`}
+                              checked={a.es_correcta}
+                              onChange={() => onSetCorrectAlternative(q.id, a.id)}
+                              className="h-4 w-4"
+                              aria-label="Marcar como correcta"
+                            />
+                            <Input
+                              value={a.texto}
+                              onChange={(e) => onUpdateAlternativeText(q.id, a.id, e.target.value)}
+                              className="flex-1"
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => onRemoveAlternative(q.id, a.id)}
+                              title="Eliminar alternativa"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                            <span className="text-xs text-muted-foreground w-5 text-right">
+                              {String.fromCharCode(97 + i)})
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-2">
+                        <Button variant="secondary" size="sm" onClick={() => onAddAlternative(q.id)}>
+                          <Plus className="h-4 w-4 mr-1" /> Agregar alternativa
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </SortableContext>
-        </div>
-      </ScrollArea>
-    </div>
+              </SortableQuestionRow>
+            ))}
+          </SortableContext>
+        )}
+      </CardContent>
+    </Card>
   );
 };
 
