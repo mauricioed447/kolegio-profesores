@@ -4,7 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { GripVertical, Trash2, Plus, X } from 'lucide-react';
+import { GripVertical, Trash2, Plus, X, Sparkles } from 'lucide-react';
 
 import type { PreguntaApp } from '@/App';
 
@@ -16,7 +16,8 @@ type Props = {
   onSetCorrectAlternative: (qId: string, altId: string) => void;
   onAddAlternative: (qId: string) => void;
   onRemoveAlternative: (qId: string, altId: string) => void;
-  onAddManualQuestion: () => void;              // 👈 nuevo
+  onAddManualQuestion: () => void;
+  onOpenGenerate: () => void; // 👈 nuevo
 };
 
 const SortableQuestionRow: React.FC<
@@ -58,14 +59,20 @@ const TestBuilder: React.FC<Props> = ({
   onAddAlternative,
   onRemoveAlternative,
   onAddManualQuestion,
+  onOpenGenerate,
 }) => {
   return (
     <Card className="lg:col-span-5 h-full">
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-row items-center justify-between gap-2">
         <CardTitle>Constructor de la Prueba</CardTitle>
-        <Button size="sm" onClick={onAddManualQuestion} title="Agregar nueva pregunta manual">
-          <Plus className="h-4 w-4 mr-1" /> Nueva pregunta manual
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" onClick={onAddManualQuestion} title="Agregar nueva pregunta manual">
+            <Plus className="h-4 w-4 mr-1" /> Nueva pregunta
+          </Button>
+          <Button size="sm" onClick={onOpenGenerate} title="Generar preguntas con IA">
+            <Sparkles className="h-4 w-4 mr-1" /> Generar (IA)
+          </Button>
+        </div>
       </CardHeader>
 
       <CardContent>
@@ -74,7 +81,7 @@ const TestBuilder: React.FC<Props> = ({
             id="test-builder-area"
             className="h-40 border-2 border-dashed rounded-md flex items-center justify-center text-sm text-muted-foreground"
           >
-            Agrega preguntas con el botón “+” (izquierda) o crea una con “Nueva pregunta manual”.
+            Agrega preguntas con “+”, crea manuales o usa “Generar (IA)”.
           </div>
         )}
 
