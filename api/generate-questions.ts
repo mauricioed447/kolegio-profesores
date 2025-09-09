@@ -1,15 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createSign } from 'crypto';
 
-// ===== Modelos (Vertex) con fallback =====
+// ====== Modelos y entorno ======
 const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'];
-
-// ===== Entorno =====
 const PROJECT = process.env.GOOGLE_CLOUD_PROJECT || '';
 const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
 
-// ===== Tipos (request mínimo; campos extra se ignoran) =====
+// ====== Tipado payload ======
 type GenerateQuestionsRequest = {
   topic?: string; // puede ir vacío si useSeed=true
   count?: number; // 1..5
@@ -17,10 +15,10 @@ type GenerateQuestionsRequest = {
   useSeed?: boolean;
   seed?: Array<{ texto: string; alternativas: string[]; correcta: string }>;
   seedLimit?: number;      // máx 10
-  topicFromSeed?: boolean; // inferir tema desde semillas
+  topicFromSeed?: boolean; // inferir tema (opcional)
 };
 
-// ===== Esquema JSON (idéntico a la versión que te funcionó) =====
+// ====== Esquema JSON (igual al que ya funcionaba) ======
 const schema = {
   type: 'array',
   items: {
@@ -42,7 +40,7 @@ const schema = {
   maxItems: 5
 };
 
-// ===== Prompt (base “como la que funcionó”, con tema opcional) =====
+// ====== Prompt builders ======
 function buildPromptBase(topic: string | undefined, count: number, difficulty: string) {
   const about = topic && topic.trim() ? ` sobre "${topic.trim()}"` : '';
   return `Genera ${count} preguntas de opción múltiple en español neutro${about}. Dificultad: ${difficulty}.
@@ -54,44 +52,39 @@ Requisitos estrictos de formato:
 - Nada de bloques de código, cabeceras o comentarios.`.trim();
 }
 
-function addSeedGuideToPrompt(
-  prompt: string,
-  seeds: {texto:string; alternativas:string[]; correcta:string}[],
-  inferredTopic: string | null
+function buildPromptSeedOnly(
+  count: number,
+  difficulty: string,
+  seeds: {texto:string; alternativas:string[]; correcta:string}[]
 ) {
-  const header = inferredTopic
-    ? `\n\nTema inferido desde la guía: ${inferredTopic}.\nAlinea estilo/registro/terminología con los ejemplos (NO los repitas literalmente):\n`
-    : `\n\nUsa la guía para alinear estilo/registro/terminología (NO repitas literalmente):\n`;
+  // Caso crítico que fallaba: solo guía, sin tema explícito
+  const base = `Genera ${count} preguntas de opción múltiple en español neutro. Dificultad: ${difficulty}.
+No hay un tema explícito. DEDUCE EL TEMA, el enfoque y la terminología a partir de los ejemplos de guía y genera PREGUNTAS NUEVAS del MISMO tema.
+Responde SOLO un arreglo JSON. NADA de texto fuera del JSON.
+Formato de cada objeto: { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] } (3 incorrectas, plausibles).
+Enunciado claro (12–30 palabras), sin ambigüedades ni doble negación.`;
 
   const examples = seeds.slice(0, 3).map((s, i) =>
     `Ejemplo ${i + 1}:\n- Enunciado: ${s.texto}\n- Alternativas: ${s.alternativas.join(' | ')}\n- Correcta: ${s.correcta}`
   ).join('\n');
 
-  return prompt + header + examples;
+  return `${base}\n\nGuía (ejemplos):\n${examples}`.trim();
 }
 
-function inferTopicFromSeeds(seeds: {texto:string; alternativas:string[]; correcta:string}[]): string {
-  const stop = new Set([
-    'el','la','los','las','un','una','unos','unas','de','del','al','y','o','u','en','para','por','con',
-    'se','que','qué','cual','cuál','cuáles','dónde','como','cómo','cuando','cuándo','porqué','porque',
-    'es','son','a','su','sus','lo','le','les','más','menos','muy','sobre','entre','hasta','desde',
-    'este','esta','estos','estas','ese','esa','esos','esas','aquel','aquella','aquellos','aquellas',
-    'quién','quiénes','cuánto','cuánta','cuántos','cuántas','donde','cuando'
-  ]);
-  const text = seeds.map(s => `${s.texto}. ${s.correcta}. ${s.alternativas.join(' ')}`).join(' ');
-  const tokens = text
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-záéíóúñü0-9\s]/gi, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 3 && !stop.has(t));
-  const freq = new Map<string, number>();
-  for (const t of tokens) freq.set(t, (freq.get(t) || 0) + 1);
-  const top = [...freq.entries()].sort((a,b) => b[1]-a[1]).slice(0, 6).map(e => e[0]);
-  return top.join(', ');
+function buildPromptSeedWithTopic(
+  topic: string,
+  count: number,
+  difficulty: string,
+  seeds: {texto:string; alternativas:string[]; correcta:string}[]
+) {
+  const base = buildPromptBase(topic, count, difficulty);
+  const examples = seeds.slice(0, 3).map((s, i) =>
+    `Ejemplo ${i + 1}:\n- Enunciado: ${s.texto}\n- Alternativas: ${s.alternativas.join(' | ')}\n- Correcta: ${s.correcta}`
+  ).join('\n');
+  return `${base}\n\nUsa la guía siguiente para alinear estilo/registro/terminología (NO repitas literalmente):\n${examples}`;
 }
 
-// ===== Auth (idéntico a la versión que funcionó) =====
+// ====== Auth (idéntico a la vez que funcionó) ======
 function b64url(input: string | Buffer) {
   const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
   return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -135,40 +128,52 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-// ===== Extracción de respuesta (base: partes .text; añadimos inlineData y fallback ligero) =====
-function extractAllTextParts(json: any): string {
+// ====== Extracción / parsing ======
+function extractAllTextOrInlineJSON(json: any): { text: string; kinds: string[] } {
+  const kinds: string[] = [];
   const parts = json?.candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) return '';
-  // preferimos inlineData si viene application/json
+  if (!Array.isArray(parts)) return { text: '', kinds };
+
+  // 1) inlineData JSON
   const inline = parts.find((p: any) => p?.inlineData?.mimeType === 'application/json' && typeof p?.inlineData?.data === 'string');
   if (inline) {
+    kinds.push('inlineData');
     try {
       const decoded = Buffer.from(inline.inlineData.data, 'base64').toString('utf8');
-      return decoded;
+      return { text: decoded, kinds };
     } catch { /* ignore */ }
   }
-  return parts
+
+  // 2) texto concatenado
+  const text = parts
     .map((p: any) => typeof p?.text === 'string' ? p.text : '')
     .filter(Boolean)
     .join('\n');
+  if (text) kinds.push('text');
+
+  return { text, kinds };
 }
 
 function tryParseArray(text: string): any[] {
   if (!text) return [];
   try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch {}
+
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) { try { const v = JSON.parse(fence[1].trim()); return Array.isArray(v) ? v : []; } catch {} }
+
   const first = text.indexOf('[');
   const last = text.lastIndexOf(']');
   if (first !== -1 && last !== -1 && last > first) {
     const slice = text.slice(first, last + 1);
     try { const v = JSON.parse(slice); return Array.isArray(v) ? v : []; } catch {}
   }
+
   try {
     const obj = JSON.parse(text);
     const arr = (obj && Array.isArray(obj.questions)) ? obj.questions : [];
     return arr;
   } catch {}
+
   return [];
 }
 
@@ -191,7 +196,7 @@ function normalizeItems(raw: any[]) {
   .filter(q => q.texto && q.correct_answer && Array.isArray(q.incorrect_answers) && q.incorrect_answers.length === 3);
 }
 
-// ===== Llamada a Vertex (MISMA CONFIG QUE LA QUE TE FUNCIONÓ: snake_case + schema) =====
+// ====== Safety: permisivo para contenido educativo ======
 const safetySettings = [
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
   { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -199,7 +204,13 @@ const safetySettings = [
   { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
 ];
 
-async function callModel(accessToken: string, model: string, prompt: string, temperature: number) {
+// ====== Llamada a Vertex (config snake_case + schema) ======
+async function callModel(
+  accessToken: string,
+  model: string,
+  prompt: string,
+  temperature: number
+) {
   const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${model}:generateContent`;
   const body = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -221,53 +232,62 @@ async function callModel(accessToken: string, model: string, prompt: string, tem
   });
 }
 
-// ===== Handler =====
+// ====== Handler ======
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   if (!PROJECT || !LOCATION) return res.status(500).json({ error: 'Faltan GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION' });
 
-  let payload: GenerateQuestionsRequest;
-  try { payload = typeof req.body === 'object' ? req.body as any : JSON.parse(req.body as any); }
+  let p: GenerateQuestionsRequest;
+  try { p = typeof req.body === 'object' ? (req.body as any) : JSON.parse(req.body as any); }
   catch { return res.status(400).json({ error: 'JSON inválido' }); }
 
   try {
     const accessToken = await getAccessToken();
 
-    const count = Math.min(Math.max(payload.count ?? 3, 1), 5);
+    const count = Math.min(Math.max(p.count ?? 3, 1), 5);
     const difficulty =
-      payload.difficulty === 'avanzada' ? 'avanzada' :
-      payload.difficulty === 'media' ? 'media' : 'básica';
+      p.difficulty === 'avanzada' ? 'avanzada' :
+      p.difficulty === 'media' ? 'media' : 'básica';
 
-    const seedsAll = Array.isArray(payload.seed) ? payload.seed : [];
-    const seeds = seedsAll.slice(0, Math.min(payload.seedLimit || 10, 10));
-    const topicEmpty = !payload.topic || !payload.topic.trim();
-    const inferred = (payload.useSeed && (payload.topicFromSeed || topicEmpty) && seeds.length)
-      ? inferTopicFromSeeds(seeds)
-      : null;
-    const topic = topicEmpty ? (inferred || '') : (payload.topic || '');
+    const seedsAll = Array.isArray(p.seed) ? p.seed : [];
+    const seeds = seedsAll.slice(0, Math.min(p.seedLimit || 10, 10));
+    const topicIsEmpty = !p.topic || !p.topic.trim();
 
-    let prompt = buildPromptBase(topic, count, difficulty);
-    if (payload.useSeed && seeds.length > 0) {
-      prompt = addSeedGuideToPrompt(prompt, seeds, inferred);
+    // —— Selección de prompt y temperatura según tu caso:
+    let prompt: string;
+    let temp = 0.7;
+    let mode = 'normal';
+
+    if (p.useSeed && seeds.length > 0 && topicIsEmpty) {
+      // Caso problemático: solo guía, sin tema → prompt específico y temperatura baja
+      prompt = buildPromptSeedOnly(count, difficulty, seeds);
+      temp = 0.25;
+      mode = 'seed-only';
+    } else if (p.useSeed && seeds.length > 0 && !topicIsEmpty) {
+      prompt = buildPromptSeedWithTopic(p.topic!.trim(), count, difficulty, seeds);
+      temp = 0.3;
+      mode = 'seed+topic';
+    } else {
+      prompt = buildPromptBase(p.topic?.trim(), count, difficulty);
+      temp = 0.7;
+      mode = 'topic-or-generic';
     }
-
-    const temperature = payload.useSeed ? 0.3 : 0.7;
 
     let lastStatus = 0;
     let lastText = '';
 
     for (const model of MODEL_CANDIDATES) {
-      const r = await callModel(accessToken, model, prompt, temperature);
+      const r = await callModel(accessToken, model, prompt, temp);
       const status = r.status;
       const text = await r.text().catch(() => '');
 
       if (r.ok) {
         let data: any; try { data = JSON.parse(text); } catch { data = {}; }
-        const raw = extractAllTextParts(data);
+        const { text: raw, kinds } = extractAllTextOrInlineJSON(data);
         const arr = tryParseArray(raw);
         const normalized = normalizeItems(arr);
 
-        console.log(`[generate-questions] model=${model} items=${normalized.length} raw_len=${raw.length} seeds=${seeds.length} inferred="${inferred || ''}"`);
+        console.log(`[generate-questions] model=${model} mode=${mode} items=${normalized.length} parts=${kinds.join('+') || 'none'} raw_len=${(raw||'').length} seeds=${seeds.length}`);
 
         return res.status(200).json(normalized);
       }
