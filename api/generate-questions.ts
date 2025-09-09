@@ -1,9 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createSign } from 'crypto';
 
 const MODEL = 'gemini-1.5-flash';
 const PROJECT = process.env.GOOGLE_CLOUD_PROJECT || '';
 const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-const API_KEY = process.env.GEMINI_API_KEY || '';
+const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
 
 type GenerateQuestionsRequest = {
   topic: string;
@@ -55,7 +56,7 @@ function buildPrompt(payload: GenerateQuestionsRequest) {
     payload.difficulty === 'media' ? 'media' : 'básica';
 
   const seedTxt = (payload.useSeed && payload.seed && payload.seed.length)
-    ? `\n\nGuía de estilo y nivel (ejemplos):\n${payload.seed.slice(0, 5).map((s, i) =>
+    ? `\n\nGuía (ejemplos):\n${payload.seed.slice(0, 5).map((s, i) =>
       `Ejemplo ${i + 1}:\n- Enunciado: ${s.texto}\n- Alternativas: ${s.alternativas.join(' | ')}\n- Correcta: ${s.correcta}`
     ).join('\n')}\n`
     : '';
@@ -69,14 +70,61 @@ Requisitos:
 ${seedTxt}`.trim();
 }
 
+function b64url(input: string | Buffer) {
+  const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
+  return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function getAccessToken(): Promise<string> {
+  if (!SA_JSON) throw new Error('Falta GOOGLE_SERVICE_ACCOUNT_JSON');
+  let creds: { client_email: string; private_key: string };
+  try {
+    creds = JSON.parse(SA_JSON);
+  } catch {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON no es JSON válido');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claims = {
+    iss: creds.client_email,
+    scope: 'https://www.googleapis.com/auth/cloud-platform',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600
+  };
+  const unsigned = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(unsigned);
+  signer.end();
+  const signature = b64url(signer.sign(creds.private_key));
+  const assertion = `${unsigned}.${signature}`;
+
+  const form = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion,
+  });
+
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`Fallo al obtener access_token: ${resp.status} ${txt.slice(0, 2000)}`);
+  }
+  const data = await resp.json() as { access_token: string };
+  if (!data.access_token) throw new Error('Respuesta sin access_token');
+  return data.access_token;
+}
+
 function parseVertexResponse(json: any): GeneratedQuestion[] {
-  // Vertex AI: candidates[0].content.parts[0].text → JSON string
   const txt = json?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!txt || typeof txt !== 'string') return [];
   try {
     const arr = JSON.parse(txt);
-    if (Array.isArray(arr)) return arr as GeneratedQuestion[];
-    return [];
+    return Array.isArray(arr) ? arr as GeneratedQuestion[] : [];
   } catch {
     return [];
   }
@@ -87,8 +135,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(405).json({ error: 'Method Not Allowed' });
     return;
   }
-  if (!API_KEY || !PROJECT || !LOCATION) {
-    res.status(500).json({ error: 'Faltan variables de entorno: GEMINI_API_KEY / GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION' });
+  if (!PROJECT || !LOCATION) {
+    res.status(500).json({ error: 'Faltan variables: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION' });
     return;
   }
 
@@ -100,30 +148,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const prompt = buildPrompt(payload);
-
-  const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${MODEL}:generateContent?key=${encodeURIComponent(API_KEY)}`;
-
-  const body = {
-    contents: [
-      {
-        role: 'user',
-        parts: [{ text: prompt }]
-      }
-    ],
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 1024,
-      responseMimeType: 'application/json',
-      responseSchema: schema
-    }
-  };
-
   try {
+    const accessToken = await getAccessToken();
+    const prompt = buildPrompt(payload);
+
+    const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${LOCATION}/publishers/google/models/${MODEL}:generateContent`;
+
+    const body = {
+      contents: [
+        { role: 'user', parts: [{ text: prompt }] }
+      ],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 1024,
+        responseMimeType: 'application/json',
+        responseSchema: schema
+      }
+    };
+
     const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify(body)
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      body: JSON.stringify(body),
     });
 
     if (!r.ok) {
@@ -144,6 +193,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     res.status(200).json(normalized);
   } catch (e: any) {
-    res.status(500).json({ error: 'Fallo al llamar a Vertex AI', details: e?.message || String(e) });
+    res.status(500).json({ error: 'Fallo en generación', details: e?.message || String(e) });
   }
 }
