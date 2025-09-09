@@ -14,6 +14,8 @@ import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import TestBuilder from './components/TestBuilder';
 import Configuration from './components/Configuration';
 import QuestionBank from './components/builder/QuestionBank';
+import GenerateQuestionsModal from './components/ai/GenerateQuestionsModal';
+import type { AppQuestion } from '@/types/ai';
 
 export interface Alternativa {
   id: string;
@@ -33,19 +35,20 @@ function App() {
   const [testHeader, setTestHeader] = useState('Nombre: __________________ Curso: _______');
   const [includeAnswerSheet, setIncludeAnswerSheet] = useState(true);
 
+  const [openGenerate, setOpenGenerate] = useState(false);
+
   // DnD SOLO para reordenar dentro del constructor
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // Generador simple de IDs
   const uuid = () =>
     (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2);
 
-  // Agregar desde el banco con botón +
+  // Agregar desde el banco (botón +)
   const handleAddFromBank = (q: any) => {
     const texto = q.question ?? q.text ?? '';
     if (!texto) return;
@@ -59,7 +62,17 @@ function App() {
     setTestQuestions((prev) => [...prev, { id: q.id, texto, alternativas }]);
   };
 
-  // NUEVO: agregar pregunta completamente manual
+  // NUEVO: inserción masiva desde IA
+  const onAddQuestionsBulk = (qs: AppQuestion[]) => {
+    const mapped: PreguntaApp[] = qs.map((q) => ({
+      id: q.id,
+      texto: q.texto,
+      alternativas: q.alternativas
+    }));
+    setTestQuestions((prev) => [...prev, ...mapped]);
+  };
+
+  // Agregar manual
   const addManualQuestion = () => {
     const qId = `manual-${uuid()}`;
     const alternativas: Alternativa[] = [
@@ -74,7 +87,7 @@ function App() {
     ]);
   };
 
-  // Reordenar preguntas dentro del constructor
+  // Reordenar dentro del constructor
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
@@ -91,7 +104,7 @@ function App() {
     setTestQuestions((prev) => prev.filter((q) => q.id !== id));
   };
 
-  // ---- Callbacks de edición en FRONT ----
+  // Edición en front
   const updateQuestionText = (qId: string, newText: string) => {
     setTestQuestions((prev) =>
       prev.map((q) => (q.id === qId ? { ...q, texto: newText } : q))
@@ -150,7 +163,7 @@ function App() {
       prev.map((q) => {
         if (q.id !== qId) return q;
         const remaining = q.alternativas.filter((a) => a.id !== altId);
-        if (remaining.length < 2) return q; // mantener al menos 2
+        if (remaining.length < 2) return q;
         const removedWasCorrect = q.alternativas.find((a) => a.id === altId)?.es_correcta;
         const normalized = removedWasCorrect
           ? remaining.map((a, i) => ({ ...a, es_correcta: i === 0 }))
@@ -159,7 +172,6 @@ function App() {
       })
     );
   };
-  // ---- fin edición ----
 
   const generatePdf = () => {
     const doc = new jsPDF();
@@ -251,7 +263,8 @@ function App() {
             onSetCorrectAlternative={setCorrectAlternative}
             onAddAlternative={addAlternative}
             onRemoveAlternative={removeAlternative}
-            onAddManualQuestion={addManualQuestion}   // 👈 nuevo
+            onAddManualQuestion={addManualQuestion}
+            onOpenGenerate={() => setOpenGenerate(true)}
           />
 
           <Configuration
@@ -266,6 +279,13 @@ function App() {
           />
         </main>
       </div>
+
+      <GenerateQuestionsModal
+        open={openGenerate}
+        onClose={() => setOpenGenerate(false)}
+        onAddQuestionsBulk={onAddQuestionsBulk}
+        seedQuestions={testQuestions}
+      />
     </DndContext>
   );
 }
