@@ -4,34 +4,22 @@ import { Input } from '@/components/ui/input';
 import type { AppQuestion, GeneratedQuestion, GenerateQuestionsRequest } from '@/types/ai';
 import { mapGeneratedToApp } from '@/lib/ai/mapVertexToApp';
 
-type SeedQuestion = {
-  texto: string;
-  alternativas: string[];
-  correcta: string;
-};
+type SeedQuestion = { texto: string; alternativas: string[]; correcta: string };
 
 type Props = {
   open: boolean;
   onClose: () => void;
   onAddQuestionsBulk: (qs: AppQuestion[]) => void;
-  seedQuestions: Array<{
-    texto: string;
-    alternativas: Array<{ texto: string; es_correcta: boolean }>;
-  }>;
+  seedQuestions: Array<{ texto: string; alternativas: Array<{ texto: string; es_correcta: boolean }> }>;
 };
 
-const GenerateQuestionsModal: React.FC<Props> = ({
-  open,
-  onClose,
-  onAddQuestionsBulk,
-  seedQuestions
-}) => {
-  const [topic, setTopic] = useState<string>('riñón');
-  const [count, setCount] = useState<number>(3);
+const GenerateQuestionsModal: React.FC<Props> = ({ open, onClose, onAddQuestionsBulk, seedQuestions }) => {
+  const [topic, setTopic] = useState('riñón');
+  const [count, setCount] = useState(3);
   const [difficulty, setDifficulty] = useState<'basica' | 'media' | 'avanzada'>('basica');
-  const [useSeed, setUseSeed] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [useSeed, setUseSeed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   const seedPayload: SeedQuestion[] = useMemo(() => {
     if (!useSeed) return [];
@@ -71,6 +59,12 @@ const GenerateQuestionsModal: React.FC<Props> = ({
 
       const data = (await r.json()) as GeneratedQuestion[];
       const appQs = mapGeneratedToApp(data);
+
+      if (!appQs.length) {
+        setErrorMsg('La IA no entregó preguntas en el formato requerido. Intenta de nuevo cambiando el tema o la cantidad.');
+        return;
+      }
+
       onAddQuestionsBulk(appQs);
       onClose();
     } catch (e: any) {
@@ -98,13 +92,7 @@ const GenerateQuestionsModal: React.FC<Props> = ({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Cantidad (1–5)</label>
-              <Input
-                type="number"
-                min={1}
-                max={5}
-                value={count}
-                onChange={(e) => setCount(Number(e.target.value))}
-              />
+              <Input type="number" min={1} max={5} value={count} onChange={(e) => setCount(Number(e.target.value))} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Dificultad</label>
@@ -121,21 +109,11 @@ const GenerateQuestionsModal: React.FC<Props> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <input
-              id="use-seed"
-              type="checkbox"
-              checked={useSeed}
-              onChange={(e) => setUseSeed(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <label htmlFor="use-seed" className="text-sm">
-              Usar como guía las preguntas seleccionadas en el constructor
-            </label>
+            <input id="use-seed" type="checkbox" checked={useSeed} onChange={(e) => setUseSeed(e.target.checked)} className="h-4 w-4" />
+            <label htmlFor="use-seed" className="text-sm">Usar como guía las preguntas seleccionadas en el constructor</label>
           </div>
 
-          {errorMsg && (
-            <div className="text-sm text-red-600">{errorMsg}</div>
-          )}
+          {errorMsg && <div className="text-sm text-red-600 whitespace-pre-wrap">{errorMsg}</div>}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={onClose}>Cancelar</Button>
