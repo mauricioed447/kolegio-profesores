@@ -57,12 +57,10 @@ function buildPromptSeedOnly(
   difficulty: string,
   seeds: {texto:string; alternativas:string[]; correcta:string}[]
 ) {
-  // Caso crítico que fallaba: solo guía, sin tema explícito
   const base = `Genera ${count} preguntas de opción múltiple en español neutro. Dificultad: ${difficulty}.
 No hay un tema explícito. DEDUCE EL TEMA, el enfoque y la terminología a partir de los ejemplos de guía y genera PREGUNTAS NUEVAS del MISMO tema.
 Responde SOLO un arreglo JSON. NADA de texto fuera del JSON.
-Formato de cada objeto: { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] } (3 incorrectas, plausibles).
-Enunciado claro (12–30 palabras), sin ambigüedades ni doble negación.`;
+Formato de cada objeto: { "texto", "correct_answer", "incorrect_answers": [3], "tags": [] } (3 incorrectas, plausibles).`;
 
   const examples = seeds.slice(0, 3).map((s, i) =>
     `Ejemplo ${i + 1}:\n- Enunciado: ${s.texto}\n- Alternativas: ${s.alternativas.join(' | ')}\n- Correcta: ${s.correcta}`
@@ -84,7 +82,7 @@ function buildPromptSeedWithTopic(
   return `${base}\n\nUsa la guía siguiente para alinear estilo/registro/terminología (NO repitas literalmente):\n${examples}`;
 }
 
-// ====== Auth (idéntico a la vez que funcionó) ======
+// ====== Auth ======
 function b64url(input: string | Buffer) {
   const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
   return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -134,7 +132,7 @@ function extractAllTextOrInlineJSON(json: any): { text: string; kinds: string[] 
   const parts = json?.candidates?.[0]?.content?.parts;
   if (!Array.isArray(parts)) return { text: '', kinds };
 
-  // 1) inlineData JSON
+  // inlineData JSON (preferido)
   const inline = parts.find((p: any) => p?.inlineData?.mimeType === 'application/json' && typeof p?.inlineData?.data === 'string');
   if (inline) {
     kinds.push('inlineData');
@@ -144,7 +142,7 @@ function extractAllTextOrInlineJSON(json: any): { text: string; kinds: string[] 
     } catch { /* ignore */ }
   }
 
-  // 2) texto concatenado
+  // texto
   const text = parts
     .map((p: any) => typeof p?.text === 'string' ? p.text : '')
     .filter(Boolean)
@@ -154,27 +152,141 @@ function extractAllTextOrInlineJSON(json: any): { text: string; kinds: string[] 
   return { text, kinds };
 }
 
+function stripFences(t: string) {
+  return t.replace(/```(?:json)?/gi, '```').replace(/```/g, '');
+}
+
 function tryParseArray(text: string): any[] {
   if (!text) return [];
+  // 1) JSON directo
   try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch {}
-
+  // 2) ```json ... ```
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) { try { const v = JSON.parse(fence[1].trim()); return Array.isArray(v) ? v : []; } catch {} }
-
+  // 3) [ ... ] heurístico
   const first = text.indexOf('[');
   const last = text.lastIndexOf(']');
   if (first !== -1 && last !== -1 && last > first) {
     const slice = text.slice(first, last + 1);
     try { const v = JSON.parse(slice); return Array.isArray(v) ? v : []; } catch {}
   }
-
+  // 4) objeto con .questions
   try {
     const obj = JSON.parse(text);
     const arr = (obj && Array.isArray(obj.questions)) ? obj.questions : [];
-    return arr;
+    if (arr.length) return arr;
   } catch {}
+  // 5) heurística por bloques en texto libre
+  return parseFromNaturalText(text);
+}
 
-  return [];
+// Heurística robusta para "Pregunta/Enunciado", "Opciones/Alternativas", "Correcta"
+function parseFromNaturalText(text: string): any[] {
+  const raw = stripFences(text).replace(/\r/g, '');
+  const lines = raw.split('\n');
+
+  type Block = { lines: string[] };
+  const blocks: Block[] = [];
+  let cur: Block | null = null;
+
+  const startRe = /^(?:\s*\d+[\.\)]\s+|pregunta\b|enunciado\b)/i;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i].trim();
+    if (!ln) continue;
+    if (!cur || startRe.test(ln)) {
+      if (cur && cur.lines.length) blocks.push(cur);
+      cur = { lines: [] };
+    }
+    cur!.lines.push(ln);
+  }
+  if (cur && cur.lines.length) blocks.push(cur);
+
+  const out: any[] = [];
+
+  for (const b of blocks) {
+    const txt = b.lines.join('\n');
+
+    // Enunciado
+    let enunciado = '';
+    const en1 = txt.match(/(?:pregunta|enunciado)\s*[:.-]?\s*([\s\S]*?)(?:\n|$)/i);
+    if (en1?.[1]) enunciado = en1[1].replace(/^\d+[\.\)]\s*/, '').trim();
+    if (!enunciado) {
+      const firstLine = b.lines[0].replace(/^\d+[\.\)]\s*/,'').trim();
+      enunciado = firstLine;
+    }
+
+    // Opciones
+    const opts: string[] = [];
+    const optLineRe = /^(?:[-*•]\s*|[a-dA-D][\)\.]\s*)(.+)$/;
+    for (const ln of b.lines) {
+      const m = ln.match(optLineRe);
+      if (m) {
+        opts.push(m[1].trim().replace(/\s*\(correcta\)\s*$/i,'').replace(/^\*\s*/,''));
+      }
+    }
+    // También aceptar opciones en bloque después de "Opciones/Alternativas:"
+    if (!opts.length) {
+      const after = txt.split(/(?:opciones|alternativas)\s*[:.-]?\s*/i)[1];
+      if (after) {
+        after.split('\n').forEach(l => {
+          const m = l.trim().match(optLineRe);
+          if (m) opts.push(m[1].trim().replace(/\s*\(correcta\)\s*$/i,'').replace(/^\*\s*/,''));
+        });
+        if (!opts.length) {
+          after.split(/[;|]/).forEach(s => {
+            const v = s.trim();
+            if (v) opts.push(v.replace(/\s*\(correcta\)\s*$/i,''));
+          });
+        }
+      }
+    }
+
+    // Correcta
+    let correcta = '';
+    const cor1 = txt.match(/(?:respuesta\s*correcta|correcta)\s*[:.-]?\s*([^\n]+)/i);
+    if (cor1?.[1]) correcta = cor1[1].trim();
+    if (!correcta && opts.length) {
+      // marcada en opciones
+      const mark = b.lines.find(l => /\(correcta\)/i.test(l));
+      if (mark) {
+        const m = mark.match(optLineRe);
+        if (m) correcta = m[1].trim();
+      } else {
+        // a veces señalan con * la correcta
+        const star = b.lines.find(l => /^\*\s*/.test(l));
+        if (star) {
+          const m = star.match(/^\*\s*(.+)$/);
+          if (m) correcta = m[1].trim();
+        }
+      }
+    }
+
+    // Incorrectas
+    let incorrectas: string[] = [];
+    const incAfter = txt.split(/(?:incorrectas|distractores)\s*[:.-]?\s*/i)[1];
+    if (incAfter) {
+      incorrectas = incAfter.split(/[;|]/).map(s => s.trim()).filter(Boolean);
+      if (!incorrectas.length) {
+        incAfter.split('\n').forEach(l => {
+          const m = l.trim().match(optLineRe);
+          if (m) incorrectas.push(m[1].trim());
+        });
+      }
+    }
+    if (!incorrectas.length && opts.length && correcta) {
+      incorrectas = opts.filter(o => o.toLowerCase() !== correcta.toLowerCase());
+    }
+
+    if (enunciado && correcta && incorrectas.length >= 3) {
+      out.push({
+        texto: enunciado,
+        correct_answer: correcta,
+        incorrect_answers: incorrectas.slice(0, 3)
+      });
+    }
+  }
+
+  return out;
 }
 
 function normalizeItems(raw: any[]) {
@@ -253,15 +365,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const seeds = seedsAll.slice(0, Math.min(p.seedLimit || 10, 10));
     const topicIsEmpty = !p.topic || !p.topic.trim();
 
-    // —— Selección de prompt y temperatura según tu caso:
+    // —— Selección de prompt/temperatura (incluye el caso problemático)
     let prompt: string;
     let temp = 0.7;
     let mode = 'normal';
 
     if (p.useSeed && seeds.length > 0 && topicIsEmpty) {
-      // Caso problemático: solo guía, sin tema → prompt específico y temperatura baja
       prompt = buildPromptSeedOnly(count, difficulty, seeds);
-      temp = 0.25;
+      temp = 0.25; // más obediente a la guía
       mode = 'seed-only';
     } else if (p.useSeed && seeds.length > 0 && !topicIsEmpty) {
       prompt = buildPromptSeedWithTopic(p.topic!.trim(), count, difficulty, seeds);
@@ -284,7 +395,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (r.ok) {
         let data: any; try { data = JSON.parse(text); } catch { data = {}; }
         const { text: raw, kinds } = extractAllTextOrInlineJSON(data);
-        const arr = tryParseArray(raw);
+
+        // 1) Intentar JSON directo
+        let arr = tryParseArray(raw);
+        // 2) Si nada, reintentar con versión “limpia” (sin fences)
+        if (!arr.length && raw) arr = tryParseArray(stripFences(raw));
+
         const normalized = normalizeItems(arr);
 
         console.log(`[generate-questions] model=${model} mode=${mode} items=${normalized.length} parts=${kinds.join('+') || 'none'} raw_len=${(raw||'').length} seeds=${seeds.length}`);
