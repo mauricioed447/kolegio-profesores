@@ -1,4 +1,4 @@
-# Kolegio Profesores - Test Builder
+# Kolegio Profesores - Test Builder-T
 
 **Kolegio Test Builder** es una herramienta web minimalista diseñada para que los profesores puedan crear pruebas en formato PDF de alta calidad en menos de un minuto, utilizando el banco de preguntas existente en la base de datos de la aplicación principal de Kolegio.
 
