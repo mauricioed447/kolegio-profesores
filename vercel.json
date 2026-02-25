@@ -1,5 +1,3 @@
-// RUTA EN TU REPO: vercel.json  (raíz del proyecto, junto a package.json)
-// ACCIÓN: CREAR este archivo si no existe, o AGREGAR la sección "functions" si ya tienes uno
 {
   "functions": {
     "api/**/*.ts": {
