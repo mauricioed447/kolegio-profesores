@@ -203,7 +203,7 @@ export const AIGeneratorPanel: React.FC<AIGeneratorPanelProps> = ({
               {oas.map((oa) => (
                 <SelectItem key={oa.codigo} value={oa.codigo}>
                   <span className="font-mono text-xs text-muted-foreground mr-2">{oa.codigo}</span>
-                  {oa.unidad}
+                  {oa.descripcion_corta}
                 </SelectItem>
               ))}
             </SelectContent>
