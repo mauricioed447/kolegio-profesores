@@ -1,3 +1,6 @@
+// RUTA EN TU REPO: src/App.tsx
+// ACCIÓN: REEMPLAZAR el archivo existente
+
 import React, { useState } from 'react';
 import jsPDF from 'jspdf';
 import {
@@ -14,7 +17,6 @@ import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import TestBuilder from './components/TestBuilder';
 import Configuration from './components/Configuration';
 import QuestionBank from './components/builder/QuestionBank';
-import GenerateQuestionsModal from './components/ai/GenerateQuestionsModal';
 import type { AppQuestion } from '@/types/ai';
 
 export interface Alternativa {
@@ -35,44 +37,38 @@ function App() {
   const [testHeader, setTestHeader] = useState('Nombre: __________________ Curso: _______');
   const [includeAnswerSheet, setIncludeAnswerSheet] = useState(true);
 
-  const [openGenerate, setOpenGenerate] = useState(false);
-
-  // DnD SOLO para reordenar dentro del constructor
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   const uuid = () =>
-    (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2);
 
-  // Agregar desde el banco (botón +)
+  // Agregar desde el banco de Supabase
   const handleAddFromBank = (q: any) => {
     const texto = q.question ?? q.text ?? '';
     if (!texto) return;
     if (testQuestions.some((t) => t.id === q.id)) return;
-
     const alternativas: Alternativa[] = [
       { id: uuid(), texto: q.correctAnswer, es_correcta: true },
       ...(q.incorrectAnswers || []).map((t: string) => ({ id: uuid(), texto: t, es_correcta: false })),
     ].sort(() => Math.random() - 0.5);
-
     setTestQuestions((prev) => [...prev, { id: q.id, texto, alternativas }]);
   };
 
-  // NUEVO: inserción masiva desde IA
+  // Inserción masiva desde IA
   const onAddQuestionsBulk = (qs: AppQuestion[]) => {
     const mapped: PreguntaApp[] = qs.map((q) => ({
       id: q.id,
       texto: q.texto,
-      alternativas: q.alternativas
+      alternativas: q.alternativas,
     }));
     setTestQuestions((prev) => [...prev, ...mapped]);
   };
 
-  // Agregar manual
   const addManualQuestion = () => {
     const qId = `manual-${uuid()}`;
     const alternativas: Alternativa[] = [
@@ -81,18 +77,12 @@ function App() {
       { id: uuid(), texto: 'Opción C', es_correcta: false },
       { id: uuid(), texto: 'Opción D', es_correcta: false },
     ];
-    setTestQuestions((prev) => [
-      ...prev,
-      { id: qId, texto: 'Nueva pregunta', alternativas },
-    ]);
+    setTestQuestions((prev) => [...prev, { id: qId, texto: 'Nueva pregunta', alternativas }]);
   };
 
-  // Reordenar dentro del constructor
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over) return;
-    if (active.id === over.id) return;
-
+    if (!over || active.id === over.id) return;
     const oldIndex = testQuestions.findIndex((q) => q.id === active.id);
     const newIndex = testQuestions.findIndex((q) => q.id === over.id);
     if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
@@ -100,78 +90,56 @@ function App() {
     }
   };
 
-  const removeQuestion = (id: string) => {
+  const removeQuestion = (id: string) =>
     setTestQuestions((prev) => prev.filter((q) => q.id !== id));
-  };
 
-  // Edición en front
-  const updateQuestionText = (qId: string, newText: string) => {
+  const updateQuestionText = (qId: string, newText: string) =>
     setTestQuestions((prev) =>
       prev.map((q) => (q.id === qId ? { ...q, texto: newText } : q))
     );
-  };
 
-  const updateAlternativeText = (qId: string, altId: string, newText: string) => {
+  const updateAlternativeText = (qId: string, altId: string, newText: string) =>
     setTestQuestions((prev) =>
       prev.map((q) =>
         q.id === qId
-          ? {
-              ...q,
-              alternativas: q.alternativas.map((a) =>
-                a.id === altId ? { ...a, texto: newText } : a
-              ),
-            }
+          ? { ...q, alternativas: q.alternativas.map((a) => (a.id === altId ? { ...a, texto: newText } : a)) }
           : q
       )
     );
-  };
 
-  const setCorrectAlternative = (qId: string, altId: string) => {
+  const setCorrectAlternative = (qId: string, altId: string) =>
     setTestQuestions((prev) =>
       prev.map((q) =>
         q.id === qId
-          ? {
-              ...q,
-              alternativas: q.alternativas.map((a) => ({
-                ...a,
-                es_correcta: a.id === altId,
-              })),
-            }
+          ? { ...q, alternativas: q.alternativas.map((a) => ({ ...a, es_correcta: a.id === altId })) }
           : q
       )
     );
-  };
 
-  const addAlternative = (qId: string) => {
+  const addAlternative = (qId: string) =>
     setTestQuestions((prev) =>
       prev.map((q) =>
         q.id === qId
-          ? {
-              ...q,
-              alternativas: [
-                ...q.alternativas,
-                { id: uuid(), texto: 'Nueva alternativa', es_correcta: false },
-              ],
-            }
+          ? { ...q, alternativas: [...q.alternativas, { id: uuid(), texto: 'Nueva alternativa', es_correcta: false }] }
           : q
       )
     );
-  };
 
-  const removeAlternative = (qId: string, altId: string) => {
+  const removeAlternative = (qId: string, altId: string) =>
     setTestQuestions((prev) =>
       prev.map((q) => {
         if (q.id !== qId) return q;
         const remaining = q.alternativas.filter((a) => a.id !== altId);
         if (remaining.length < 2) return q;
         const removedWasCorrect = q.alternativas.find((a) => a.id === altId)?.es_correcta;
-        const normalized = removedWasCorrect
-          ? remaining.map((a, i) => ({ ...a, es_correcta: i === 0 }))
-          : remaining;
-        return { ...q, alternativas: normalized };
+        return {
+          ...q,
+          alternativas: removedWasCorrect
+            ? remaining.map((a, i) => ({ ...a, es_correcta: i === 0 }))
+            : remaining,
+        };
       })
     );
-  };
 
   const generatePdf = () => {
     const doc = new jsPDF();
@@ -199,7 +167,6 @@ function App() {
     testQuestions.forEach((q, index) => {
       const questionText = `${index + 1}. ${q.texto}`;
       const splitQuestion = doc.splitTextToSize(questionText, doc.internal.pageSize.width - margin * 2);
-
       checkPageBreak(splitQuestion.length * 5 + q.alternativas.length * 5 + 5);
 
       doc.setFont('helvetica', 'bold');
@@ -211,9 +178,7 @@ function App() {
         const letter = String.fromCharCode(97 + altIndex);
         const altText = `${letter}) ${alt.texto}`;
         const splitAlt = doc.splitTextToSize(altText, doc.internal.pageSize.width - margin * 2 - 5);
-
         checkPageBreak(splitAlt.length * 5);
-
         doc.text(splitAlt, margin + 5, y);
         y += splitAlt.length * 5;
       });
@@ -252,7 +217,9 @@ function App() {
         <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <QuestionBank
             onAddQuestion={handleAddFromBank}
+            onAddQuestionsBulk={onAddQuestionsBulk}
             selectedQuestionIds={testQuestions.map((q) => q.id)}
+            currentQuestionCount={testQuestions.length}
           />
 
           <TestBuilder
@@ -264,7 +231,7 @@ function App() {
             onAddAlternative={addAlternative}
             onRemoveAlternative={removeAlternative}
             onAddManualQuestion={addManualQuestion}
-            onOpenGenerate={() => setOpenGenerate(true)}
+            onOpenGenerate={() => {}}
           />
 
           <Configuration
@@ -279,13 +246,6 @@ function App() {
           />
         </main>
       </div>
-
-      <GenerateQuestionsModal
-        open={openGenerate}
-        onClose={() => setOpenGenerate(false)}
-        onAddQuestionsBulk={onAddQuestionsBulk}
-        seedQuestions={testQuestions}
-      />
     </DndContext>
   );
 }
