@@ -1,12 +1,15 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createReadStream } from 'fs';
-import { join } from 'path';
+// RUTA EN TU REPO: api/get-grados.ts
+// ACCIÓN: REEMPLAZAR el archivo existente
 
-// Leemos el JSON en el servidor, nunca sale el archivo completo al cliente
-const DATA_PATH = join(__dirname, '_data', 'oas_maestro_final.json');
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = join(__filename, '..');
 
 type OA = {
-  codigo: string;
   asignatura: string;
   grado: string;
   grado_num: number;
@@ -24,14 +27,13 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const data = require('./_data/oas_maestro_final.json') as { objetivos: OA[] };
-    const oas: OA[] = data.objetivos;
+    const filePath = join(__dirname, '_data', 'oas_maestro_final.json');
+    const raw = readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw) as { objetivos: OA[] };
 
-    // Construir mapa grado → asignaturas únicas
     const gradoMap = new Map<string, GradoInfo>();
 
-    for (const oa of oas) {
+    for (const oa of data.objetivos) {
       if (!gradoMap.has(oa.grado)) {
         gradoMap.set(oa.grado, {
           grado: oa.grado,
@@ -46,11 +48,8 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Ordenar grados: básico primero (7°, 8°), luego medio (1°→4°)
     const grados = Array.from(gradoMap.values()).sort((a, b) => {
-      if (a.grado_tipo !== b.grado_tipo) {
-        return a.grado_tipo === 'basico' ? -1 : 1;
-      }
+      if (a.grado_tipo !== b.grado_tipo) return a.grado_tipo === 'basico' ? -1 : 1;
       return a.grado_num - b.grado_num;
     });
 
