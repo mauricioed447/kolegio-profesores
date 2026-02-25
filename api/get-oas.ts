@@ -1,47 +1,44 @@
+// RUTA EN TU REPO: api/get-oas.ts
+// ACCIÓN: REEMPLAZAR el archivo existente
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { readFileSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = join(__filename, '..');
 
 type OA = {
   codigo: string;
   unidad: string;
   descripcion: string;
-  indicadores: string[];
-  palabras_clave: string[];
-  proposito_unidad: string;
   asignatura: string;
   grado: string;
-  grado_num: number;
-  grado_tipo: string;
-  modulo: string;
   preguntas_ejemplo: any[];
 };
 
-// Solo devolvemos lo necesario para el dropdown, nunca el OA completo
 type OAResumen = {
   codigo: string;
   unidad: string;
-  descripcion_corta: string; // primeras 80 chars para el dropdown
+  descripcion_corta: string;
 };
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method Not Allowed' });
 
   const { grado, asignatura } = req.query;
-
   if (!grado || !asignatura) {
     return res.status(400).json({ error: 'Faltan parámetros: grado y asignatura son requeridos' });
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const data = require('./_data/oas_maestro_final.json') as { objetivos: OA[] };
+    const filePath = join(__dirname, '_data', 'oas_maestro_final.json');
+    const raw = readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw) as { objetivos: OA[] };
 
     const filtrados = data.objetivos
-      .filter(
-        (oa) =>
-          oa.grado === String(grado) &&
-          oa.asignatura === String(asignatura)
-      )
+      .filter((oa) => oa.grado === String(grado) && oa.asignatura === String(asignatura))
       .map((oa): OAResumen => ({
         codigo: oa.codigo,
         unidad: oa.unidad,
