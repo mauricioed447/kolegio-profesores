@@ -1,0 +1,206 @@
+{
+  "version": "1.0",
+  "descripcion": "Taxonomía de generación de preguntas basada en análisis del Banco de Ítems MINEDUC y Taxonomía de Bloom. Define patrones por asignatura para guiar la generación con IA.",
+  "bloom_dificultad": {
+    "descripcion": "Mapeo entre nivel de dificultad y niveles de la Taxonomía de Bloom",
+    "niveles": {
+      "Superficial": {
+        "bloom": ["recordar", "comprender"],
+        "descripcion": "El estudiante reconoce, define o describe conceptos directamente desde lo aprendido",
+        "verbos_clave": ["¿Cuál es?", "¿Qué es?", "Define", "Identifica", "¿Cómo se llama?", "¿Qué tipo de?"],
+        "caracteristica": "Respuesta directa, sin necesidad de inferir ni calcular"
+      },
+      "Medio": {
+        "bloom": ["aplicar", "analizar"],
+        "descripcion": "El estudiante aplica conceptos en un contexto o analiza relaciones entre elementos",
+        "verbos_clave": ["Calcula", "Determina", "¿Por qué?", "¿Qué relación existe?", "¿Cuál es la causa?", "Compara", "¿Qué ocurriría si?"],
+        "caracteristica": "Requiere usar el conocimiento en una situación concreta o establecer relaciones"
+      },
+      "Profundo": {
+        "bloom": ["analizar", "evaluar"],
+        "descripcion": "El estudiante evalúa, infiere o extrae conclusiones a partir de evidencias o situaciones complejas",
+        "verbos_clave": ["¿Qué conclusión se puede extraer?", "¿Cuál es la mejor explicación?", "Evalúa", "¿Qué implicancia tiene?", "¿Qué evidencia apoya?"],
+        "caracteristica": "Requiere razonamiento de orden superior, inferencia o juicio crítico"
+      }
+    }
+  },
+  "asignaturas": {
+    "Ciencias Naturales": {
+      "descripcion": "Incluye Biología, Física y Química en 7° y 8° básico. En enseñanza media se separan.",
+      "recursos_por_frecuencia": ["pregunta directa", "cálculo y fórmula", "interpretación de figura", "interpretación de diagrama", "comprensión de texto"],
+      "distribucion_dificultad_recomendada": {"Superficial": 40, "Medio": 45, "Profundo": 15},
+      "notas": "Predomina la pregunta directa conceptual. Los cálculos aparecen en Física y Química. Las figuras se usan para estructuras biológicas o montajes experimentales.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["pregunta directa", "cálculo y fórmula", "interpretación de figura"],
+        "Profundo": ["interpretación de diagrama", "interpretación de figura", "comprensión de texto"]
+      }
+    },
+    "Biología": {
+      "descripcion": "Ciencias Naturales eje Biología en 1° y 2° Medio",
+      "recursos_por_frecuencia": ["pregunta directa", "interpretación de figura", "interpretación de diagrama", "comprensión de texto"],
+      "distribucion_dificultad_recomendada": {"Superficial": 35, "Medio": 45, "Profundo": 20},
+      "notas": "Frecuente uso de figuras para estructuras celulares, sistemas del cuerpo, ciclos biológicos. Las preguntas directas dominan en conceptos y definiciones.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["pregunta directa", "interpretación de figura"],
+        "Profundo": ["interpretación de diagrama", "comprensión de texto", "interpretación de figura"]
+      }
+    },
+    "Física": {
+      "descripcion": "Ciencias Naturales eje Física en 1° y 2° Medio",
+      "recursos_por_frecuencia": ["cálculo y fórmula", "pregunta directa", "interpretación de figura", "interpretación de diagrama"],
+      "distribucion_dificultad_recomendada": {"Superficial": 30, "Medio": 50, "Profundo": 20},
+      "notas": "El cálculo y la fórmula son centrales. Las figuras aparecen en óptica, cinemática y circuitos. Las preguntas directas cubren conceptos y definiciones.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["cálculo y fórmula", "interpretación de figura"],
+        "Profundo": ["cálculo y fórmula", "interpretación de diagrama"]
+      }
+    },
+    "Química": {
+      "descripcion": "Ciencias Naturales eje Química en 1° y 2° Medio",
+      "recursos_por_frecuencia": ["cálculo y fórmula", "pregunta directa", "interpretación de tabla", "interpretación de diagrama"],
+      "distribucion_dificultad_recomendada": {"Superficial": 30, "Medio": 50, "Profundo": 20},
+      "notas": "Combinación de cálculo estequiométrico y conceptos teóricos. Las tablas aparecen en experimentos y datos de laboratorio.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["cálculo y fórmula", "interpretación de tabla"],
+        "Profundo": ["cálculo y fórmula", "interpretación de diagrama"]
+      }
+    },
+    "Matemática": {
+      "descripcion": "7° Básico a 4° Medio",
+      "recursos_por_frecuencia": ["cálculo y fórmula", "pregunta directa", "interpretación de figura", "interpretación de tabla"],
+      "distribucion_dificultad_recomendada": {"Superficial": 25, "Medio": 50, "Profundo": 25},
+      "notas": "El cálculo es el recurso dominante en todos los niveles. Las figuras son esenciales en geometría. Las tablas aparecen en estadística y probabilidad. Casi nunca se usa texto narrativo extenso.",
+      "recursos_por_dificultad": {
+        "Superficial": ["cálculo y fórmula", "pregunta directa"],
+        "Medio": ["cálculo y fórmula", "interpretación de figura"],
+        "Profundo": ["cálculo y fórmula", "interpretación de figura", "interpretación de tabla"]
+      }
+    },
+    "Historia, Geografía y Ciencias Sociales": {
+      "descripcion": "7° Básico a 2° Medio",
+      "recursos_por_frecuencia": ["comprensión de texto", "pregunta directa", "interpretación de figura", "interpretación de mapa"],
+      "distribucion_dificultad_recomendada": {"Superficial": 30, "Medio": 35, "Profundo": 35},
+      "notas": "Es la asignatura con mayor proporción de Profundo (35%). La comprensión de texto es central — fuentes primarias, crónicas, artículos. Los mapas conceptuales y esquemas son frecuentes en Profundo.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["comprensión de texto", "pregunta directa"],
+        "Profundo": ["comprensión de texto", "interpretación de figura", "interpretación de mapa"]
+      }
+    },
+    "Lengua y Literatura": {
+      "descripcion": "7° Básico a 4° Medio. En 3° y 4° Medio aumenta la complejidad textual.",
+      "recursos_por_frecuencia": ["comprensión de texto", "pregunta directa", "interpretación de figura"],
+      "distribucion_dificultad_recomendada": {"Superficial": 35, "Medio": 50, "Profundo": 15},
+      "notas": "La comprensión de texto es el recurso dominante (70-100%). En 3° y 4° Medio sube a 89-100%. Casi siempre se entrega un fragmento literario, noticia, columna o documento para responder.",
+      "recursos_por_dificultad": {
+        "Superficial": ["comprensión de texto"],
+        "Medio": ["comprensión de texto"],
+        "Profundo": ["comprensión de texto", "interpretación de figura"]
+      },
+      "nota_especial": "Siempre incluir un texto de apoyo (fragmento literario, noticia, columna de opinión, documento histórico-literario) apropiado al grado y OA."
+    },
+    "Inglés": {
+      "descripcion": "7° Básico a 4° Medio",
+      "recursos_por_frecuencia": ["comprensión de texto", "pregunta directa"],
+      "distribucion_dificultad_recomendada": {"Superficial": 40, "Medio": 45, "Profundo": 15},
+      "notas": "Las preguntas se basan en comprensión de textos en inglés (diálogos, instrucciones, emails, noticias breves). Las preguntas directas evalúan vocabulario y gramática.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["comprensión de texto"],
+        "Profundo": ["comprensión de texto"]
+      },
+      "nota_especial": "El enunciado y las alternativas SIEMPRE en inglés. Solo el mensaje de feedback puede ir en español."
+    },
+    "Filosofía": {
+      "descripcion": "3° y 4° Medio. Formación General.",
+      "recursos_por_frecuencia": ["pregunta directa", "comprensión de texto"],
+      "distribucion_dificultad_recomendada": {"Superficial": 30, "Medio": 45, "Profundo": 25},
+      "notas": "Predominan las preguntas conceptuales directas. En niveles Medio y Profundo se usan citas o fragmentos filosóficos breves como contexto.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["pregunta directa", "comprensión de texto"],
+        "Profundo": ["comprensión de texto"]
+      }
+    },
+    "Educación Ciudadana": {
+      "descripcion": "3° y 4° Medio. Formación General.",
+      "recursos_por_frecuencia": ["comprensión de texto", "pregunta directa"],
+      "distribucion_dificultad_recomendada": {"Superficial": 25, "Medio": 50, "Profundo": 25},
+      "notas": "Alta proporción de comprensión de texto (58%). Se usan artículos de prensa, declaraciones, documentos legales o datos estadísticos como contexto.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["comprensión de texto", "pregunta directa"],
+        "Profundo": ["comprensión de texto"]
+      }
+    },
+    "Ciencia para la Ciudadanía": {
+      "descripcion": "3° Medio. Módulos: Bienestar y Salud, Ambiente y Sostenibilidad, Seguridad y Autocuidado, Tecnología y Sociedad.",
+      "recursos_por_frecuencia": ["pregunta directa", "comprensión de texto", "interpretación de diagrama"],
+      "distribucion_dificultad_recomendada": {"Superficial": 30, "Medio": 50, "Profundo": 20},
+      "notas": "Predomina la pregunta directa conceptual. En módulos de Ambiente y Sostenibilidad se usan más datos y esquemas. El enfoque es aplicación a situaciones cotidianas.",
+      "recursos_por_dificultad": {
+        "Superficial": ["pregunta directa"],
+        "Medio": ["pregunta directa", "comprensión de texto"],
+        "Profundo": ["comprensión de texto", "interpretación de diagrama"]
+      }
+    }
+  },
+  "instrucciones_recursos": {
+    "pregunta directa": {
+      "descripcion": "Pregunta sin material de apoyo. El estudiante responde desde su conocimiento.",
+      "cuando_usar": "Conceptos, definiciones, relaciones causa-efecto directas, procedimientos conocidos.",
+      "imagen_requerida": false
+    },
+    "comprensión de texto": {
+      "descripcion": "Se entrega un fragmento textual (literario, periodístico, histórico, científico) y las preguntas se responden a partir de él.",
+      "cuando_usar": "Cuando el OA involucra interpretación, análisis de fuentes o comprensión lectora.",
+      "imagen_requerida": false,
+      "instruccion_ia": "Generar un texto breve (4-8 líneas) apropiado al grado y OA, luego formular la pregunta basada en ese texto."
+    },
+    "interpretación de figura": {
+      "descripcion": "Se presenta una imagen, diagrama, ilustración o esquema visual.",
+      "cuando_usar": "Estructuras biológicas, montajes experimentales, situaciones geométricas, fenómenos físicos visuales.",
+      "imagen_requerida": true,
+      "instruccion_ia": "Describir con precisión la imagen que debe crearse: qué elementos contiene, cómo están distribuidos, qué está señalado o numerado."
+    },
+    "interpretación de tabla": {
+      "descripcion": "Se presenta una tabla con datos que el estudiante debe leer e interpretar.",
+      "cuando_usar": "Experimentos, datos estadísticos, comparaciones entre variables.",
+      "imagen_requerida": true,
+      "instruccion_ia": "Generar los datos de la tabla en formato estructurado y describir cómo debe visualizarse."
+    },
+    "interpretación de diagrama": {
+      "descripcion": "Gráfico, mapa conceptual, esquema de flujo, diagrama de barras/líneas.",
+      "cuando_usar": "Ciclos, procesos, relaciones complejas, datos históricos o científicos en serie.",
+      "imagen_requerida": true,
+      "instruccion_ia": "Describir el tipo de diagrama, sus ejes o nodos, y los datos o relaciones que muestra."
+    },
+    "interpretación de mapa": {
+      "descripcion": "Mapa geográfico, histórico o temático.",
+      "cuando_usar": "Ubicación de civilizaciones, rutas comerciales, distribución geográfica, fenómenos climáticos.",
+      "imagen_requerida": true,
+      "instruccion_ia": "Describir qué región muestra el mapa, qué elementos están destacados y qué información se puede leer en él."
+    },
+    "cálculo y fórmula": {
+      "descripcion": "La pregunta involucra una expresión matemática, fórmula o procedimiento de cálculo.",
+      "cuando_usar": "Matemática, Física, Química. Cuando el OA requiere operar, resolver o determinar un valor.",
+      "imagen_requerida": false,
+      "instruccion_ia": "Incluir la expresión matemática en formato LaTeX usando $...$ para expresiones inline y $$...$$ para bloques."
+    }
+  },
+  "feedback_mensajes": {
+    "correcto": [
+      "¡Correcto!",
+      "¡Muy bien!",
+      "¡Excelente!",
+      "¡Así es!",
+      "¡Perfecto!"
+    ],
+    "incorrecto_formato": "La respuesta correcta es '{respuesta_correcta}'. {explicacion_breve}",
+    "instruccion_ia": "El Mensaje Incorrecto debe comenzar con 'La respuesta correcta es [Respuesta1].' seguido de una explicación breve (1-2 oraciones) que ayude al estudiante a entender por qué esa es la correcta, sin mencionar las otras alternativas."
+  }
+}
