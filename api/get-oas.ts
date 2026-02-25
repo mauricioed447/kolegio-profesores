@@ -1,13 +1,10 @@
-// RUTA EN TU REPO: api/get-oas.ts
-// ACCIÓN: REEMPLAZAR el archivo existente
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = join(__filename, '..');
+const __dirname = dirname(__filename);
 
 type OA = {
   codigo: string;
@@ -25,11 +22,16 @@ type OAResumen = {
 };
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
 
   const { grado, asignatura } = req.query;
+
   if (!grado || !asignatura) {
-    return res.status(400).json({ error: 'Faltan parámetros: grado y asignatura son requeridos' });
+    return res.status(400).json({
+      error: 'Faltan parámetros: grado y asignatura son requeridos',
+    });
   }
 
   try {
@@ -38,16 +40,26 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     const data = JSON.parse(raw) as { objetivos: OA[] };
 
     const filtrados = data.objetivos
-      .filter((oa) => oa.grado === String(grado) && oa.asignatura === String(asignatura))
+      .filter(
+        (oa) =>
+          oa.grado === String(grado) &&
+          oa.asignatura === String(asignatura)
+      )
       .map((oa): OAResumen => ({
         codigo: oa.codigo,
         unidad: oa.unidad,
-        descripcion_corta: oa.descripcion.replace(/>/g, '·').slice(0, 120) + (oa.descripcion.length > 120 ? '…' : ''),
+        descripcion_corta:
+          oa.descripcion.replace(/>/g, '·').slice(0, 120) +
+          (oa.descripcion.length > 120 ? '…' : ''),
       }));
 
     res.setHeader('Cache-Control', 's-maxage=3600');
     return res.status(200).json({ oas: filtrados });
+
   } catch (e: any) {
-    return res.status(500).json({ error: 'Error cargando datos', details: e?.message });
+    return res.status(500).json({
+      error: 'Error cargando datos',
+      details: e?.message,
+    });
   }
 }
