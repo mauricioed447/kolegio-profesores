@@ -2,6 +2,12 @@
 // ACCIÓN: REEMPLAZAR el archivo existente
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = join(__filename, '..');
 
 // ─── Tipos internos ────────────────────────────────────────────────────────────
 
@@ -81,14 +87,14 @@ const RECURSOS_CON_IMAGEN = new Set([
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getOA(codigo: string): OA | null {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const data = require('./_data/oas_maestro_final.json') as { objetivos: OA[] };
+  const filePath = join(__dirname, '_data', 'oas_maestro_final.json');
+  const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { objetivos: OA[] };
   return data.objetivos.find((o) => o.codigo === codigo) ?? null;
 }
 
 function getTaxonomia(): Taxonomia {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require('./_data/taxonomia_preguntas.json') as Taxonomia;
+  const filePath = join(__dirname, '_data', 'taxonomia_preguntas.json');
+  return JSON.parse(readFileSync(filePath, 'utf-8')) as Taxonomia;
 }
 
 function getRecursosValidos(taxonomia: Taxonomia, asignatura: string, dificultad: string): string[] {
