@@ -1,13 +1,10 @@
-// RUTA EN TU REPO: api/get-grados.ts
-// ACCIÓN: REEMPLAZAR el archivo existente
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = join(__filename, '..');
+const __dirname = dirname(__filename);
 
 type OA = {
   asignatura: string;
@@ -24,7 +21,9 @@ type GradoInfo = {
 };
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
 
   try {
     const filePath = join(__dirname, '_data', 'oas_maestro_final.json');
@@ -42,6 +41,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
           asignaturas: [],
         });
       }
+
       const entry = gradoMap.get(oa.grado)!;
       if (!entry.asignaturas.includes(oa.asignatura)) {
         entry.asignaturas.push(oa.asignatura);
@@ -49,13 +49,19 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const grados = Array.from(gradoMap.values()).sort((a, b) => {
-      if (a.grado_tipo !== b.grado_tipo) return a.grado_tipo === 'basico' ? -1 : 1;
+      if (a.grado_tipo !== b.grado_tipo) {
+        return a.grado_tipo === 'basico' ? -1 : 1;
+      }
       return a.grado_num - b.grado_num;
     });
 
     res.setHeader('Cache-Control', 's-maxage=3600');
     return res.status(200).json({ grados });
+
   } catch (e: any) {
-    return res.status(500).json({ error: 'Error cargando datos', details: e?.message });
+    return res.status(500).json({
+      error: 'Error cargando datos',
+      details: e?.message,
+    });
   }
 }
