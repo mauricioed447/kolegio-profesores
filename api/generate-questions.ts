@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = join(__filename, '..');
 
-// ─── Tipos internos ────────────────────────────────────────────────────────────
+// ─── Tipos ────────────────────────────────────────────────────────────────────
 
 type Dificultad = 'Superficial' | 'Medio' | 'Profundo' | 'Auto';
 
@@ -18,43 +18,15 @@ type GenerateRequest = {
   dificultad: Dificultad;
   cantidad: number;
   es_adicional?: boolean;
-  ids_existentes?: string[];
 };
 
-type OA = {
+type OAData = {
   codigo: string;
-  unidad: string;
   descripcion: string;
-  indicadores: string[];
+  basal: boolean;
   palabras_clave: string[];
   proposito_unidad: string;
-  asignatura: string;
-  grado: string;
-  preguntas_ejemplo: Array<{
-    enunciado: string;
-    respuesta: string;
-    tiene_imagen: boolean;
-    dificultad: string;
-  }>;
-};
-
-type TaxonomiaAsignatura = {
-  recursos_por_dificultad: Record<string, string[]>;
-  distribucion_dificultad_recomendada: Record<string, number>;
-  nota_especial?: string;
-};
-
-type Taxonomia = {
-  bloom_dificultad: {
-    niveles: Record<string, {
-      bloom: string[];
-      descripcion: string;
-      verbos_clave: string[];
-      caracteristica: string;
-    }>;
-  };
-  asignaturas: Record<string, TaxonomiaAsignatura>;
-  instrucciones_recursos: Record<string, { imagen_requerida: boolean; instruccion_ia?: string }>;
+  indicadores: string;
 };
 
 type PreguntaGenerada = {
@@ -84,45 +56,92 @@ const RECURSOS_CON_IMAGEN = new Set([
   'interpretación de mapa',
 ]);
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Lectura del JSON V3 ──────────────────────────────────────────────────────
 
-function getOA(codigo: string): OA | null {
-  const filePath = join(__dirname, '_data', 'oas_maestro_final.json');
-  const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { objetivos: OA[] };
-  return data.objetivos.find((o) => o.codigo === codigo) ?? null;
+let cachedV3: any = null;
+
+function getV3(): any {
+  if (cachedV3) return cachedV3;
+  const filePath = join(__dirname, '_data', 'oas_maestro_v3.json');
+  cachedV3 = JSON.parse(readFileSync(filePath, 'utf-8'));
+  return cachedV3;
 }
 
-function getTaxonomia(): Taxonomia {
-  const filePath = join(__dirname, '_data', 'taxonomia_preguntas.json');
-  return JSON.parse(readFileSync(filePath, 'utf-8')) as Taxonomia;
+type OAContext = {
+  oa: OAData;
+  grado: string;
+  asignatura: string;
+  eje: string;
+};
+
+function findOA(codigo: string): OAContext | null {
+  const v3 = getV3();
+
+  for (const [gradoNombre, gradoData] of Object.entries(v3.grados as Record<string, any>)) {
+    for (const [asigNombre, asigData] of Object.entries(gradoData.asignaturas as Record<string, any>)) {
+
+      // Asignaturas con ejes
+      if (asigData.tiene_ejes && asigData.ejes) {
+        for (const [ejeNombre, ejeData] of Object.entries(asigData.ejes as Record<string, any>)) {
+          if (ejeData?.objetivos?.[codigo]) {
+            return { oa: ejeData.objetivos[codigo], grado: gradoNombre, asignatura: asigNombre, eje: ejeNombre };
+          }
+        }
+      }
+      // Asignaturas con módulos
+      else if (asigData.tiene_modulos && asigData.modulos) {
+        for (const [modNombre, modData] of Object.entries(asigData.modulos as Record<string, any>)) {
+          if (modData?.objetivos?.[codigo]) {
+            return { oa: modData.objetivos[codigo], grado: gradoNombre, asignatura: asigNombre, eje: modNombre };
+          }
+        }
+      }
+      // Asignaturas sin ejes
+      else if (asigData.objetivos?.[codigo]) {
+        return { oa: asigData.objetivos[codigo], grado: gradoNombre, asignatura: asigNombre, eje: '' };
+      }
+    }
+  }
+
+  return null;
 }
 
-function getRecursosValidos(taxonomia: Taxonomia, asignatura: string, dificultad: string): string[] {
-  const taxAsig = taxonomia.asignaturas[asignatura];
+function getTaxonomiaAsig(asignatura: string): any {
+  const v3 = getV3();
+  // La taxonomía está embebida en cada asignatura del V3
+  for (const gradoData of Object.values(v3.grados as Record<string, any>)) {
+    const asigData = gradoData.asignaturas?.[asignatura];
+    if (asigData?.taxonomia) return asigData.taxonomia;
+  }
+  return null;
+}
+
+// ─── Helpers de construcción de prompt ───────────────────────────────────────
+
+function getRecursosValidos(taxAsig: any, dificultad: string): string[] {
   if (!taxAsig) return ['pregunta directa'];
 
   if (dificultad === 'Auto') {
     const todos = new Set<string>();
-    for (const recursos of Object.values(taxAsig.recursos_por_dificultad)) {
+    for (const recursos of Object.values(taxAsig.recursos_por_dificultad as Record<string, string[]>)) {
       recursos.forEach((r) => todos.add(r));
     }
     return Array.from(todos).filter((r) => !RECURSOS_CON_IMAGEN.has(r));
   }
 
-  const recursos = taxAsig.recursos_por_dificultad[dificultad] ?? ['pregunta directa'];
+  const recursos: string[] = taxAsig.recursos_por_dificultad?.[dificultad] ?? ['pregunta directa'];
   return recursos.filter((r) => !RECURSOS_CON_IMAGEN.has(r));
 }
 
-function buildDistribucion(taxonomia: Taxonomia, asignatura: string, cantidad: number): Record<string, number> {
-  const taxAsig = taxonomia.asignaturas[asignatura];
+function buildDistribucion(taxAsig: any, cantidad: number): Record<string, number> {
   const dist = taxAsig?.distribucion_dificultad_recomendada ?? { Superficial: 35, Medio: 45, Profundo: 20 };
   const superficial = Math.round((dist.Superficial / 100) * cantidad);
-  const profundo = Math.round((dist.Profundo / 100) * cantidad);
-  const medio = cantidad - superficial - profundo;
+  const profundo    = Math.round((dist.Profundo    / 100) * cantidad);
+  const medio       = cantidad - superficial - profundo;
   return {
     Superficial: Math.max(superficial, 0),
-    Medio: Math.max(medio, 0),
-    Profundo: Math.max(profundo, 0),
+    Medio:       Math.max(medio,       0),
+    Profundo:    Math.max(profundo,    0),
   };
 }
 
@@ -130,60 +149,66 @@ function buildSystemPrompt(): string {
   return `Eres un experto en diseño de evaluaciones educativas para el sistema escolar chileno (currículum MINEDUC).
 Generas preguntas de selección múltiple de alta calidad, alineadas a los Objetivos de Aprendizaje oficiales.
 Usas la Taxonomía de Bloom para asegurar el nivel cognitivo correcto.
-Respondes ÚNICAMENTE con un JSON array válido. Sin texto adicional. Sin bloques markdown. Sin explicaciones.`;
+Respondes ÚNICAMENTE con un JSON array válido. Sin texto adicional. Sin bloques markdown. Sin explicaciones.
+IMPORTANTE: Nunca uses notación LaTeX ($...$, $$...$$). Expresa las fórmulas matemáticas en texto plano:
+- Usa ^ para potencias: x^2, ax^2 + bx + c
+- Usa / para fracciones: 3/4, (a+b)/(c-d)
+- Usa sqrt() para raíces: sqrt(x), sqrt(x^2 + y^2)
+- Usa != para distinto de, <= para menor o igual, >= para mayor o igual
+- Ejemplo correcto: f(x) = ax^2 + bx + c (a != 0)`;
 }
 
 function buildUserPrompt(
-  oa: OA,
+  ctx: OAContext,
   dificultad: Dificultad,
   cantidad: number,
-  taxonomia: Taxonomia,
+  taxAsig: any,
   recursosValidos: string[],
   distribucion: Record<string, number> | null
 ): string {
-  const bloom = taxonomia.bloom_dificultad.niveles;
-  const taxAsig = taxonomia.asignaturas[oa.asignatura];
+  const v3 = getV3();
+  const bloom = v3.bloom_dificultad?.niveles ?? {};
   const notaEspecial = taxAsig?.nota_especial ? `\nNOTA ESPECIAL: ${taxAsig.nota_especial}` : '';
-
-  const ejemplos = (oa.preguntas_ejemplo || [])
-    .filter((e) => !e.tiene_imagen)
-    .slice(0, 3)
-    .map((e, i) => `Ejemplo ${i + 1} (${e.dificultad}):\n  Enunciado: ${e.enunciado}\n  Respuesta: ${e.respuesta}`)
-    .join('\n');
 
   const instrDistribucion = distribucion
     ? `DISTRIBUCIÓN REQUERIDA: ${distribucion.Superficial} Superficial, ${distribucion.Medio} Medio, ${distribucion.Profundo} Profundo.`
     : `DIFICULTAD: Todas las preguntas deben ser nivel "${dificultad}".
-Nivel Bloom: ${bloom[dificultad]?.bloom.join(', ')}
-Verbos clave: ${bloom[dificultad]?.verbos_clave.join(', ')}
-Característica: ${bloom[dificultad]?.caracteristica}`;
+Nivel Bloom: ${bloom[dificultad]?.bloom?.join(', ') ?? ''}
+Verbos clave: ${bloom[dificultad]?.verbos_clave?.join(', ') ?? ''}
+Característica: ${bloom[dificultad]?.caracteristica ?? ''}`;
+
+  const indicadores = ctx.oa.indicadores
+    ? `\nINDICADORES DE EVALUACIÓN:\n${ctx.oa.indicadores}`
+    : '';
+
+  const palabrasClave = ctx.oa.palabras_clave?.length
+    ? `\nPALABRAS CLAVE DEL DOMINIO:\n${ctx.oa.palabras_clave.join(', ')}`
+    : '';
+
+  const proposito = ctx.oa.proposito_unidad
+    ? `\nPROPÓSITO DE LA UNIDAD:\n${ctx.oa.proposito_unidad}`
+    : '';
+
+  const ejeInfo = ctx.eje ? `\nEJE / MÓDULO: ${ctx.eje}` : '';
 
   return `Genera ${cantidad} preguntas de selección múltiple para el siguiente contexto curricular:
 
-GRADO: ${oa.grado}
-ASIGNATURA: ${oa.asignatura}
-UNIDAD: ${oa.unidad}
-OBJETIVO DE APRENDIZAJE: ${oa.codigo}
-DESCRIPCIÓN OA: ${oa.descripcion}
-
-INDICADORES DE EVALUACIÓN:
-${oa.indicadores.join('\n')}
-
-PALABRAS CLAVE DEL DOMINIO:
-${oa.palabras_clave.join(', ')}
+GRADO: ${ctx.grado}
+ASIGNATURA: ${ctx.asignatura}${ejeInfo}
+OBJETIVO DE APRENDIZAJE: ${ctx.oa.codigo}
+DESCRIPCIÓN OA: ${ctx.oa.descripcion}${indicadores}${palabrasClave}${proposito}
 
 ${instrDistribucion}
 
-RECURSOS PERMITIDOS (sin imagen): ${recursosValidos.join(', ')}
-${notaEspecial}
+RECURSOS PERMITIDOS (sin imagen): ${recursosValidos.join(', ')}${notaEspecial}
 
 REGLAS OBLIGATORIAS:
 - 4 alternativas por pregunta (1 correcta, 3 incorrectas plausibles)
 - Los distractores deben representar errores conceptuales reales y comunes, NO respuestas absurdas
-- Usa contextos y ejemplos chilenos cuando sea pertinente
+- Usa contextos y ejemplos apropiados para estudiantes chilenos cuando sea pertinente
 - No repitas el mismo concepto en dos preguntas del lote
 - Para "comprensión de texto": incluye el fragmento textual DENTRO del campo Pregunta, antes de la pregunta
-- Para "cálculo y fórmula": usa LaTeX inline con $...$ para expresiones matemáticas${ejemplos ? `\n\nEJEMPLOS DE REFERENCIA DEL BANCO MINEDUC (guía de formato y nivel, NO copiar):\n${ejemplos}` : ''}
+- Para "cálculo y fórmula": usa texto plano (x^2, sqrt(), !=) NUNCA LaTeX
 
 FORMATO DE SALIDA — devuelve SOLO este JSON array, sin nada más:
 [
@@ -203,6 +228,8 @@ FORMATO DE SALIDA — devuelve SOLO este JSON array, sin nada más:
 ]`;
 }
 
+// ─── Parsing y validación ─────────────────────────────────────────────────────
+
 function tryParseArray(text: string): any[] {
   if (!text) return [];
   try { const v = JSON.parse(text); return Array.isArray(v) ? v : []; } catch {}
@@ -211,7 +238,7 @@ function tryParseArray(text: string): any[] {
     try { const v = JSON.parse(fence[1].trim()); return Array.isArray(v) ? v : []; } catch {}
   }
   const first = text.indexOf('[');
-  const last = text.lastIndexOf(']');
+  const last  = text.lastIndexOf(']');
   if (first !== -1 && last > first) {
     try { const v = JSON.parse(text.slice(first, last + 1)); return Array.isArray(v) ? v : []; } catch {}
   }
@@ -220,17 +247,17 @@ function tryParseArray(text: string): any[] {
 
 function validateQuestion(q: any): q is PreguntaGenerada {
   return (
-    typeof q?.Pregunta === 'string' && q.Pregunta.length > 0 &&
-    typeof q?.Respuesta1 === 'string' && q.Respuesta1.length > 0 &&
-    typeof q?.Respuesta2 === 'string' &&
-    typeof q?.Respuesta3 === 'string' &&
-    typeof q?.Respuesta4 === 'string' &&
-    typeof q?.['Mensaje Correcto'] === 'string' &&
+    typeof q?.Pregunta    === 'string' && q.Pregunta.length    > 0 &&
+    typeof q?.Respuesta1  === 'string' && q.Respuesta1.length  > 0 &&
+    typeof q?.Respuesta2  === 'string' &&
+    typeof q?.Respuesta3  === 'string' &&
+    typeof q?.Respuesta4  === 'string' &&
+    typeof q?.['Mensaje Correcto']   === 'string' &&
     typeof q?.['Mensaje Incorrecto'] === 'string'
   );
 }
 
-// ─── Handler principal ────────────────────────────────────────────────────────
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
@@ -253,20 +280,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const cantidadFinal = Math.min(Math.max(Number(cantidad) || 5, 1), es_adicional ? 5 : MAX_CANTIDAD);
 
-  const oa = getOA(codigo_oa);
-  if (!oa) return res.status(404).json({ error: `OA no encontrado: ${codigo_oa}` });
+  const ctx = findOA(codigo_oa);
+  if (!ctx) return res.status(404).json({ error: `OA no encontrado: ${codigo_oa}` });
 
-  const taxonomia = getTaxonomia();
-  const recursosValidos = getRecursosValidos(taxonomia, oa.asignatura, dificultad);
-  const distribucion = dificultad === 'Auto'
-    ? buildDistribucion(taxonomia, oa.asignatura, cantidadFinal)
+  const taxAsig       = getTaxonomiaAsig(ctx.asignatura);
+  const recursosValidos = getRecursosValidos(taxAsig, dificultad);
+  const distribucion    = dificultad === 'Auto'
+    ? buildDistribucion(taxAsig, cantidadFinal)
     : null;
 
   const systemPrompt = buildSystemPrompt();
-  const userPrompt = buildUserPrompt(oa, dificultad, cantidadFinal, taxonomia, recursosValidos, distribucion);
+  const userPrompt   = buildUserPrompt(ctx, dificultad, cantidadFinal, taxAsig, recursosValidos, distribucion);
 
-  try {
-    const response = await fetch(DEEPSEEK_API_URL, {
+  const callDeepSeek = async (messages: any[], temperature = 0.7) => {
+    return fetch(DEEPSEEK_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -274,15 +301,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       body: JSON.stringify({
         model: DEEPSEEK_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.7,
+        messages,
+        temperature,
         max_tokens: 4000,
         response_format: { type: 'json_object' },
       }),
     });
+  };
+
+  try {
+    const response = await callDeepSeek([
+      { role: 'system', content: systemPrompt },
+      { role: 'user',   content: userPrompt   },
+    ]);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -304,29 +335,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const validadas = parsed.filter(validateQuestion);
 
     if (!validadas.length) {
-      const retryResponse = await fetch(DEEPSEEK_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: DEEPSEEK_MODEL,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-            { role: 'assistant', content: rawContent },
-            { role: 'user', content: 'Tu respuesta anterior no era un JSON array válido con el formato solicitado. Responde ÚNICAMENTE con el JSON array, sin ningún texto adicional ni envoltura.' },
-          ],
-          temperature: 0.5,
-          max_tokens: 4000,
-        }),
-      });
+      // Retry
+      const retryResponse = await callDeepSeek([
+        { role: 'system',    content: systemPrompt },
+        { role: 'user',      content: userPrompt   },
+        { role: 'assistant', content: rawContent   },
+        { role: 'user',      content: 'Tu respuesta anterior no era un JSON array válido con el formato solicitado. Responde ÚNICAMENTE con el JSON array, sin ningún texto adicional ni envoltura.' },
+      ], 0.5);
 
       if (retryResponse.ok) {
-        const retryData = await retryResponse.json();
+        const retryData    = await retryResponse.json();
         const retryContent = retryData?.choices?.[0]?.message?.content ?? '';
-        const retryParsed = tryParseArray(retryContent).filter(validateQuestion);
+        const retryParsed  = tryParseArray(retryContent).filter(validateQuestion);
         if (retryParsed.length) return res.status(200).json(retryParsed);
       }
 
