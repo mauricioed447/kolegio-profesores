@@ -3,7 +3,6 @@
 
 export type Dificultad = 'Superficial' | 'Medio' | 'Profundo' | 'Auto';
 
-// Lo que enviamos al endpoint generate-questions
 export type GenerateQuestionsRequest = {
   codigo_oa: string;
   dificultad: Dificultad;
@@ -11,7 +10,6 @@ export type GenerateQuestionsRequest = {
   es_adicional?: boolean;
 };
 
-// Lo que devuelve el endpoint (una pregunta generada)
 export type PreguntaGenerada = {
   Pregunta: string;
   Respuesta1: string;
@@ -21,27 +19,40 @@ export type PreguntaGenerada = {
   'Mensaje Correcto': string;
   'Mensaje Incorrecto': string;
   imagen_requerida: false;
-  imagen_descripcion: string | null; // reservado para futura implementación premium
+  imagen_descripcion: string | null;
   nivel_bloom: string;
   dificultad: string;
 };
 
-// Resumen de OA para los dropdowns (nunca el OA completo)
+// Resumen de OA para los dropdowns
 export type OAResumen = {
   codigo: string;
-  unidad: string;
+  grado: string;
+  asignatura: string;
+  eje: string;
   descripcion_corta: string;
+  basal: boolean;
 };
 
-// Info de grado con sus asignaturas
+// Info de grado con asignaturas y ejes
+export type EjeInfo = {
+  eje: string;
+};
+
+export type AsignaturaInfo = {
+  nombre: string;
+  tiene_ejes: boolean;
+  tiene_modulos: boolean;
+  ejes: string[]; // lista de ejes o módulos disponibles
+};
+
 export type GradoInfo = {
   grado: string;
   grado_num: number;
   grado_tipo: string;
-  asignaturas: string[];
+  asignaturas: AsignaturaInfo[];
 };
 
-// Formato interno de la app
 export type AppAlternative = {
   id: string;
   texto: string;
@@ -57,6 +68,6 @@ export type AppQuestion = {
   dificultad?: string;
 };
 
-// Compatibilidad con código legacy
+// Compatibilidad legacy
 export type GeneratedQuestion = PreguntaGenerada;
 export type Difficulty = 'basica' | 'media' | 'avanzada';
